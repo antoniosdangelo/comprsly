@@ -28,4 +28,4 @@ The installer is built with PyInstaller (`Comprsly.spec`) and Inno Setup (`insta
 
 ## License
 
-All rights reserved. See `LICENSE`.
+MIT, see `LICENSE`.
