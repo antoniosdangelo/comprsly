@@ -1,0 +1,77 @@
+name: Build
+
+# Safety: only ever runs on pushes/tags YOU make, or a manual click.
+# Deliberately no `pull_request` / `pull_request_target` trigger — a public
+# repo means anyone can open a PR, and either of those triggers would let a
+# stranger's fork run code in this workflow with access to repo secrets
+# (eventually the SignPath signing token). Build-and-test-only workflows for
+# external PRs, if ever added, must live in a separate workflow file with no
+# secrets access.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+# Least-privilege default token. Nothing in this workflow needs write access
+# to the repo itself.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build Comprsly.exe (PyInstaller)
+        run: pyinstaller Comprsly.spec --noconfirm
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer (Inno Setup)
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+        shell: pwsh
+
+      # --- SignPath signing goes here once the Foundation application is
+      # approved and a project + signing policy exist to issue a token
+      # against. Left out on purpose rather than stubbed with a fake token,
+      # nothing here should reference a secret that doesn't exist yet.
+      #
+      # - name: Submit for signing (SignPath)
+      #   shell: pwsh
+      #   env:
+      #     SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      #   run: |
+      #     Install-Module -Name SignPath -Force
+      #     Submit-SigningRequest `
+      #       -ApiToken $env:SIGNPATH_API_TOKEN `
+      #       -OrganizationId "<org-id>" `
+      #       -ProjectSlug "comprsly" `
+      #       -SigningPolicySlug "release-signing" `
+      #       -ArtifactConfigurationSlug "installer" `
+      #       -InputArtifactPath "installer-output/ComprslySetup.exe" `
+      #       -OutputArtifactPath "installer-output/ComprslySetup-signed.exe" `
+      #       -WaitForCompletion
+
+      - name: Upload unsigned build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: comprsly-build-${{ github.sha }}
+          path: |
+            dist/
+            installer-output/ComprslySetup.exe
+          retention-days: 14
