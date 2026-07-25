@@ -1,5 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import uiautomation
 from PyInstaller.utils.hooks import collect_all
+
+# Resolved from wherever uiautomation is actually installed rather than
+# hardcoded, the old hardcoded path only existed on one machine and broke
+# every other environment (e.g. CI) outright.
+_uia_bin_dir = os.path.join(os.path.dirname(uiautomation.__file__), 'bin')
 
 # The new web-based Settings UI (2026-07-22) renders in WebView2 via pywebview,
 # which drives the WebView2 SDK through pythonnet (clr). Bundling these into
@@ -14,7 +21,7 @@ _cl_d, _cl_b, _cl_h = collect_all('clr_loader')
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[('C:\\Users\\anton\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\uiautomation\\bin\\UIAutomationClient_VC140_X64.dll', 'uiautomation/bin'), ('C:\\Users\\anton\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\uiautomation\\bin\\UIAutomationClient_VC140_X86.dll', 'uiautomation/bin')] + _wv_b + _pn_b + _cl_b,
+    binaries=[(os.path.join(_uia_bin_dir, 'UIAutomationClient_VC140_X64.dll'), 'uiautomation/bin'), (os.path.join(_uia_bin_dir, 'UIAutomationClient_VC140_X86.dll'), 'uiautomation/bin')] + _wv_b + _pn_b + _cl_b,
     datas=[('assets', 'assets'), ('webui', 'webui')] + _wv_d + _pn_d + _cl_d,
     # winspell drives the Windows spell-check COM API through comtypes.
     # Naming these explicitly stops PyInstaller silently omitting parts of
