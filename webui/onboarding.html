@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Welcome to Comprsly</title>
+<style>
+  :root{
+    --font:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    --font-disp:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
+    --accent:#5738C7;--on-accent:#fff;--green:#2C8A5A;--green-ink:#1E6E43;
+    --win:#fff;--card:#FBFAFD;--ground:#F0EFF4;
+    --ink:#1B1A21;--muted:#6E6B7B;--faint:#9B98A8;--hair:#ECEAF2;--hair2:#E2DFEC;
+    --logo:url("__BADGE_URI__");--heroglow:color-mix(in srgb,var(--accent) 22%,var(--win));
+  }
+  /* Light-only (real ask 2026-07-25, Antonio, direct: "get rid of the
+     system and dark, only keep light") -- dark @media block and
+     [data-theme="dark"] override removed on purpose, not just hidden. */
+  *{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}
+  body{font-family:var(--font);color:var(--ink);background:var(--win);-webkit-font-smoothing:antialiased;overflow:hidden}
+  .hero{height:132px;position:relative;display:grid;place-items:center;border-bottom:1px solid var(--hair);background:radial-gradient(120% 130% at 50% -10%,var(--heroglow),var(--win) 62%)}
+  .hero .lg{width:70px;height:70px;background:var(--logo) center/contain no-repeat;filter:drop-shadow(0 12px 24px rgba(70,45,160,.4));position:relative;z-index:2}
+  .hero .ring{position:absolute;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);opacity:.6;width:140px;height:140px}.hero .ring.two{width:200px;height:200px;opacity:.3}
+  .body{padding:22px 26px 6px}
+  .step{display:none}.step.on{display:block}
+  .k{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px}
+  h1{font-family:var(--font-disp);font-size:23px;font-weight:700;letter-spacing:-.6px;line-height:1.15}
+  .sub{color:var(--muted);font-size:13px;margin-top:9px;line-height:1.5}
+  .feats{display:flex;flex-direction:column;gap:11px;margin-top:18px}
+  .feat{display:flex;gap:12px;align-items:flex-start}
+  .feat .ic{width:32px;height:32px;border-radius:9px;flex:none;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 12%,var(--win));color:var(--accent)}
+  .feat .ic.g{background:color-mix(in srgb,var(--green) 14%,var(--win));color:var(--green-ink)}.feat .ic svg{width:16px;height:16px}
+  .feat .t{font-size:13.5px;font-weight:600}.feat .d{font-size:12px;color:var(--muted);margin-top:1px;line-height:1.4}
+  .choice{display:flex;flex-direction:column;gap:10px;margin-top:18px}
+  .opt{border:1px solid var(--hair2);border-radius:13px;padding:14px;cursor:pointer;transition:.15s;background:var(--card)}
+  .opt:hover{border-color:color-mix(in srgb,var(--accent) 45%,var(--hair2))}
+  .opt.rec{border-color:color-mix(in srgb,var(--accent) 55%,transparent);background:color-mix(in srgb,var(--accent) 7%,var(--win))}
+  .opt .top{display:flex;align-items:center;gap:9px}.opt .top .t{font-size:14px;font-weight:700}
+  .opt .tag{margin-left:auto;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--accent);color:var(--on-accent)}.opt .tag.n{background:var(--ground);color:var(--muted)}
+  .opt .d{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.5}.opt .d b{color:var(--ink);font-weight:600}
+  .priv{display:flex;align-items:center;gap:8px;justify-content:center;margin:16px 0 2px;font-size:11.5px;color:var(--green-ink);font-weight:600}.priv svg{width:13px;height:13px}
+  .foot{display:flex;align-items:center;gap:12px;padding:14px 26px 20px}
+  .dots{display:flex;gap:7px}.dot{width:7px;height:7px;border-radius:50%;background:var(--hair2)}.dot.on{background:var(--accent);width:20px;border-radius:99px}
+  .sp{flex:1}
+  .btn{border:none;cursor:pointer;font-family:var(--font);font-weight:600;font-size:13.5px;border-radius:10px;padding:11px 20px;background:var(--accent);color:var(--on-accent)}
+  .back{background:none;border:none;color:var(--muted);cursor:pointer;font:inherit;font-weight:600;font-size:13px;display:flex;align-items:center;gap:5px}.back svg{width:15px;height:15px}
+</style></head><body>
+  <div class="hero"><div class="ring two"></div><div class="ring"></div><div class="lg"></div></div>
+  <div class="body">
+    <div class="step on" data-s="1">
+      <div class="k">Welcome</div>
+      <h1>Your AI prompts, sharper, every time you type one.</h1>
+      <div class="sub">Comprsly cleans up whatever text box you're in, then, when you're prompting an AI, tightens the whole thing to save tokens.</div>
+      <div class="feats">
+        <div class="feat"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h10M4 17h13"/><path d="M18 15l2 2 3-4"/></svg></div><div><div class="t">Fixes spelling, grammar &amp; clarity</div><div class="d">As you type in Claude, ChatGPT, Gemini and other AI chats.</div></div></div>
+        <div class="feat"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg></div><div><div class="t">Compresses AI prompts to save tokens</div><div class="d">Same meaning, fewer tokens, on Claude, ChatGPT and others.</div></div></div>
+        <div class="feat"><div class="ic g"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><div><div class="t">100% on your device</div><div class="d">Nothing you type is ever sent anywhere. Ever.</div></div></div>
+      </div>
+    </div>
+    <div class="step" data-s="2">
+      <div id="s2-choose">
+        <div class="k">One optional add-on</div>
+        <h1>Want prompt compression too?</h1>
+        <div class="sub">Spelling, grammar and punctuation work right now. The AI "make it concise" step is a one-time download, your choice.</div>
+        <div class="choice">
+          <div class="opt rec" data-ai="1"><div class="top"><span class="t">Get the AI</span><span class="tag">Recommended</span></div>
+            <div class="d"><b>One-time ~1 GB download.</b> Unlocks token-saving compression. Runs fully on your device, and you can remove it anytime to free the space.</div></div>
+          <div class="opt" data-ai="0"><div class="top"><span class="t">Start with grammar &amp; spelling</span><span class="tag n">Lightest</span></div>
+            <div class="d">Skip the download. Spelling, grammar &amp; punctuation work immediately. Add the AI later in Settings whenever you want.</div></div>
+        </div>
+        <div class="priv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> The download is the only time Comprsly ever uses the network.</div>
+      </div>
+      <!-- Shown instead of the choice above when the installer already
+           fetched the model (see main() in script below): there is nothing
+           left to choose, both features are already ready, asking again
+           would just be a redundant, confusing extra step. -->
+      <div id="s2-already" style="display:none">
+        <div class="k">All set</div>
+        <h1>You're ready to go.</h1>
+        <div class="sub">The AI model finished downloading during setup. Spelling, grammar, punctuation and AI-powered prompt compression are all ready right now, nothing else to do here.</div>
+        <div class="choice">
+          <div class="opt rec" style="cursor:default"><div class="top"><span class="t">Full package installed</span><span class="tag">✓ Ready</span></div>
+            <div class="d">Grammar &amp; spelling, plus AI prompt compression. You can turn any of it off later in Settings if you want.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="foot">
+    <div class="dots"><span class="dot on"></span><span class="dot"></span></div><div class="sp"></div>
+    <div id="f1"><button class="btn" id="next">Get started</button></div>
+    <div id="f2" style="display:none;align-items:center;gap:14px">
+      <button class="back" id="back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg> Back</button>
+      <button class="btn" id="finish">Finish setup</button>
+    </div>
+  </div>
+<script>
+  const api=()=>window.pywebview.api;
+  let modelAlready=false;  // set on load if the wizard already fetched the model -- see below
+  function go(s){
+    document.querySelectorAll(".step").forEach(x=>x.classList.toggle("on",x.dataset.s==String(s)));
+    document.querySelectorAll(".dot").forEach((d,i)=>d.classList.toggle("on",i==(s-1)));
+    document.getElementById("f1").style.display=s==1?"block":"none";
+    document.getElementById("f2").style.display=s==2?"flex":"none";
+  }
+  document.getElementById("next").onclick=()=>go(2);
+  document.getElementById("back").onclick=()=>go(1);
+  // Only the real choice cards (data-ai present) are clickable -- the
+  // "already installed" confirmation card has nothing to choose.
+  document.querySelectorAll(".opt[data-ai]").forEach(o=>o.onclick=()=>{document.querySelectorAll(".opt[data-ai]").forEach(x=>x.classList.remove("rec"));o.classList.add("rec");});
+  document.getElementById("finish").onclick=async()=>{
+    const sel=document.querySelector(".opt[data-ai].rec");
+    const getAI=modelAlready || (sel && sel.dataset.ai==="1");
+    await api().finish_onboarding(!!getAI);
+  };
+  window.addEventListener("pywebviewready", async ()=>{
+    // Real ask 2026-07-24 (Antonio): if the install wizard already fetched
+    // the model, don't turn around and ask "grammar-only or full package?"
+    // on the very next screen -- we already have the full package, so show
+    // a confirmation instead of a redundant, confusing choice.
+    try{
+      const m=await api().get_model();
+      if (m && m.downloaded){
+        modelAlready=true;
+        document.getElementById("s2-choose").style.display="none";
+        document.getElementById("s2-already").style.display="block";
+      }
+    }catch(e){}
+  });
+</script></body></html>

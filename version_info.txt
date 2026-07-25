@@ -1,0 +1,38 @@
+# Windows version resource. Without this, the exe has no FileDescription,
+# and Windows falls back to the raw file name in every place it names a
+# running app: Task Manager's "Name" column, the taskbar button's hover
+# tooltip, the Details tab, and SmartScreen's "unknown publisher" dialog.
+# That is why the app still read as "TokenSaver" after the rebrand even
+# though every on-screen string was already Comprsly.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 9, 81, 0),
+    prodvers=(0, 9, 81, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'Comprsly'),
+            StringStruct('FileDescription', 'Comprsly'),
+            StringStruct('FileVersion', '0.9.81'),
+            StringStruct('InternalName', 'Comprsly'),
+            StringStruct('LegalCopyright', ''),
+            StringStruct('OriginalFilename', 'Comprsly.exe'),
+            StringStruct('ProductName', 'Comprsly'),
+            StringStruct('ProductVersion', '0.9.81'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)
