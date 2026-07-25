@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Comprsly</title>
+<style>
+  :root{
+    --font:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    --font-disp:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
+    --mono:"Cascadia Code",ui-monospace,Consolas,monospace;
+    --accent:#5738C7;--on-accent:#fff;--green:#2C8A5A;--green-ink:#1E6E43;
+    --card:#fff;--surface2:#FBFAFD;--ink:#1B1A21;--muted:#6E6B7B;--faint:#9B98A8;--hair:#ECEAF2;--hair2:#E2DFEC;--logo:url("__BADGE_URI__");
+  }
+  /* Light-only (real ask 2026-07-25, Antonio, direct: "get rid of the
+     system and dark, only keep light") -- dark @media block and
+     [data-theme="dark"] override removed on purpose, not just hidden.
+     (This card is currently dormant, see main.py's warmcard comment: "the
+     native card is the default" -- kept consistent with the two live
+     webview pages anyway.) */
+  *{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}
+  body{font-family:var(--font);color:var(--ink);background:var(--card);-webkit-font-smoothing:antialiased;overflow:hidden;display:flex;flex-direction:column}
+  .hd{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--hair);flex:none}
+  .hd .mk{width:24px;height:24px;background:var(--logo) center/contain no-repeat}
+  .hd .nm{font-family:var(--font-disp);font-weight:600;font-size:14px}
+  .hd .lock{margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--green-ink);background:color-mix(in srgb,var(--green) 14%,var(--card));padding:4px 9px;border-radius:999px;font-weight:600}.hd .lock svg{width:11px;height:11px}
+  .hd .x{border:none;background:transparent;color:var(--muted);cursor:pointer;font-size:16px;line-height:1;width:26px;height:26px;border-radius:7px;display:grid;place-items:center;flex:none}
+  .hd .x:hover{background:var(--surface2);color:var(--ink)}
+  .bd{flex:1;overflow-y:auto;padding:16px}
+  .bd::-webkit-scrollbar{width:9px}.bd::-webkit-scrollbar-track{background:transparent}
+  .bd::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--accent) 45%,var(--hair2));border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+  .bd::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+  .step{display:flex;gap:12px}.step+.step{margin-top:6px;padding-top:16px;border-top:1px solid var(--hair)}
+  .step .idx{width:22px;height:22px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;font-weight:700;font-family:var(--font-disp);background:color-mix(in srgb,var(--accent) 15%,var(--card));color:var(--accent);margin-top:1px}
+  .step.done .idx{background:var(--green);color:#fff}.step.idle .idx{background:var(--surface2);color:var(--faint)}
+  .step .main{flex:1;min-width:0}.step .t{font-weight:600;font-size:14px}.step .d{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .doneline{font-size:13.5px;font-weight:600;padding:5px 0}
+  .fixes-scroll{max-height:172px;overflow-y:auto;margin:12px 0 4px;padding-right:6px}
+  .fixes-scroll::-webkit-scrollbar{width:9px}.fixes-scroll::-webkit-scrollbar-track{background:transparent}
+  .fixes-scroll::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--accent) 55%,var(--hair2));border-radius:99px;border:2px solid transparent;background-clip:padding-box}
+  .fixes-scroll::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+  .fixes{display:flex;flex-direction:column;gap:7px}
+  .fix{display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--hair);border-radius:11px;background:var(--surface2);font-size:13px}
+  .chk{width:18px;height:18px;border-radius:6px;flex:none;display:grid;place-items:center;border:1.6px solid var(--hair2);background:var(--card);cursor:pointer}
+  .chk.on{background:var(--accent);border-color:var(--accent)}.chk svg{width:11px;height:11px}.fix.off{opacity:.5}
+  .fix .txt{flex:1;min-width:0}.fix .was{color:var(--faint);text-decoration:line-through}.fix .arw{color:var(--faint);margin:0 5px}.fix .now{color:var(--ink);font-weight:600}.fix .kind{font-size:11px;color:var(--faint);flex:none}
+  .btn{border:none;cursor:pointer;font-family:var(--font);font-weight:600;font-size:13.5px;border-radius:10px;padding:10px 16px;display:inline-flex;align-items:center;gap:8px}
+  .btn.p{background:var(--accent);color:var(--on-accent)}.btn.soft{background:color-mix(in srgb,var(--accent) 15%,var(--card));color:var(--accent)}.btn.ghost{background:transparent;color:var(--muted);padding:10px 14px}
+  .row{display:flex;align-items:center;gap:8px;margin-top:14px}
+  .compare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+  .pane{border:1px solid var(--hair);border-radius:12px;padding:11px 12px;background:var(--surface2);min-height:100px}
+  .pane.out{background:color-mix(in srgb,var(--accent) 9%,var(--card));border-color:color-mix(in srgb,var(--accent) 26%,var(--card))}
+  .pane .h{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600;margin-bottom:7px}.pane.out .h{color:var(--accent)}
+  .pane .body{font-size:12.5px;line-height:1.5}.pane.orig .body{color:var(--muted)}
+  .savings{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--green-ink);font-weight:600}.savings svg{width:15px;height:15px}.savings .arrow{margin-left:auto;color:var(--faint);font-family:var(--mono)}
+  .loadrow{display:flex;align-items:center;gap:11px;margin-top:14px;padding:11px 13px;border:1px solid var(--hair);border-radius:11px;background:var(--surface2)}
+  .dots3{display:inline-flex;gap:6px}.dots3 span{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:d3 1.25s ease-in-out infinite}
+  .dots3 span:nth-child(2){animation-delay:.16s}.dots3 span:nth-child(3){animation-delay:.32s}
+  @keyframes d3{0%,64%,100%{transform:translateY(0);opacity:.3}32%{transform:translateY(-6px);opacity:1}}
+  @media(prefers-reduced-motion:reduce){.dots3 span{animation:none;opacity:.55}}
+  .loadtxt{font-size:12.5px;color:var(--muted)}
+  .ft{display:flex;align-items:center;gap:7px;padding:11px 16px;border-top:1px solid var(--hair);font-size:11.5px;color:var(--green-ink);font-weight:600;flex:none}.ft svg{width:12px;height:12px}
+</style></head><body>
+  <div class="hd"><div class="mk"></div><div class="nm">Comprsly</div>
+    <div class="lock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> On your device</div>
+    <button class="x" id="closeX" title="Close">✕</button></div>
+  <div class="bd" id="bd"></div>
+  <div class="ft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> 100% on your device — nothing you type leaves it</div>
+<script>
+  const api=()=>window.pywebview.api;
+  let P=null;              // payload
+
+  // Content height (independent of the window's current height): sum the
+  // header, footer, and the body's children + its padding. Lets Python size
+  // the window to the content so there's no dead space under Step 2, and so
+  // the card can nest against the badge no matter how tall it is (2026-07-23).
+  window.__measure=function(){
+    var hd=document.querySelector('.hd'), bd=document.getElementById('bd'), ft=document.querySelector('.ft');
+    var h=0;
+    if(hd) h+=hd.getBoundingClientRect().height;
+    if(ft) h+=ft.getBoundingClientRect().height;
+    if(bd){ var cs=getComputedStyle(bd); h+=parseFloat(cs.paddingTop)+parseFloat(cs.paddingBottom);
+      for(var i=0;i<bd.children.length;i++) h+=bd.children[i].getBoundingClientRect().height; }
+    return Math.ceil(h)+2;
+  };
+  // Ask Python to re-fit the window after a re-render (apply/compress change
+  // the height). Python keeps the badge corner fixed and grows/shrinks upward.
+  window.__sync=function(){ try{ api().set_height(window.__measure()); }catch(e){} };
+  function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+  const check='<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5"><path d="M5 13l4 4L19 7"/></svg>';
+
+  function renderStep1(){
+    const s=P.suggestions;
+    if(!s.length){
+      return `<div class="step done"><div class="idx">${check}</div><div class="main"><div class="doneline">Looks clean — no grammar issues</div></div></div>`
+        + step2Offer();
+    }
+    const rows=s.map((f,i)=>`<div class="fix" data-i="${i}"><span class="chk on">${check}</span>
+      <span class="txt"><span class="was">${esc(f.original)}</span><span class="arw">→</span><span class="now">${esc(f.replacement||"(removed)")}</span></span>
+      <span class="kind">${esc(f.kind||"")}</span></div>`).join("");
+    return `<div class="step"><div class="idx">1</div><div class="main">
+      <div class="t">Fix grammar &amp; clarity</div><div class="d">${s.length} thing${s.length>1?'s':''} to clean up · tick the ones to apply</div>
+      <div class="fixes-scroll"><div class="fixes">${rows}</div></div>
+      <div class="row"><button class="btn p" id="fixall">Apply ${s.length} fixes</button><button class="btn ghost" id="dismiss1">Dismiss</button></div>
+    </div></div>
+    <div class="step idle"><div class="idx">2</div><div class="main"><div class="t" style="color:var(--faint)">Make it concise</div><div class="d">${P.ai_enabled?'Available after Step 1':'AI compression is off'}</div></div></div>`;
+  }
+  function step2Offer(){
+    if(!P.ai_enabled) return `<div class="step idle"><div class="idx">2</div><div class="main"><div class="t" style="color:var(--faint)">Make it concise</div><div class="d">Turn on the AI in Settings to compress prompts.</div></div></div>`;
+    return `<div class="step"><div class="idx">2</div><div class="main"><div class="t">Make it concise</div><div class="d">Tighten this prompt with the on-device AI to save tokens.</div>
+      <div class="row"><button class="btn soft" id="compress">✦ Compress prompt</button><button class="btn ghost" id="dismiss2">Dismiss</button></div></div></div>`;
+  }
+  function renderDoneThenCompress(nFixed){
+    return `<div class="step done"><div class="idx">${check}</div><div class="main"><div class="doneline">Step 1 · ${nFixed} fixes applied</div></div></div>`+step2Offer();
+  }
+  function renderCompressing(){
+    document.getElementById("bd").innerHTML =
+      `<div class="step done"><div class="idx">${check}</div><div class="main"><div class="doneline">Step 1 · done</div></div></div>
+       <div class="step"><div class="idx">2</div><div class="main"><div class="t">Making it concise…</div><div class="d">Compressing your prompt on this device.</div>
+       <div class="loadrow"><div class="dots3"><span></span><span></span><span></span></div><span class="loadtxt">Working, this takes a moment</span></div></div></div>`;
+    window.__sync();
+  }
+  function renderResult(r){
+    document.getElementById("bd").innerHTML =
+      `<div class="step done"><div class="idx">${check}</div><div class="main"><div class="doneline">Step 1 · done</div></div></div>
+       <div class="step"><div class="idx">2</div><div class="main"><div class="t">Make it concise</div>
+       <div class="compare"><div class="pane orig"><div class="h">Original</div><div class="body">${esc(r.original)}</div></div>
+       <div class="pane out"><div class="h">Optimized</div><div class="body">${esc(r.optimized)}</div></div></div>
+       <div class="savings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M18 13l-6 6-6-6"/></svg><span><b>${r.saved} tokens</b> saved</span><span class="arrow">${r.src_tok} → ${r.out_tok}</span></div>
+       <div class="row"><button class="btn p" id="applyc">Apply optimized</button><button class="btn ghost" id="keep">Keep original</button></div></div></div>`;
+    document.getElementById("applyc").onclick=async()=>{ await api().apply_text(r.optimized, true); };
+    document.getElementById("keep").onclick=async()=>{ await api().dismiss(); };
+    window.__sync();
+  }
+
+  function wire(){
+    const bd=document.getElementById("bd");
+    bd.onclick=async(e)=>{
+      const chk=e.target.closest(".chk");
+      if(chk){ chk.classList.toggle("on"); chk.closest(".fix").classList.toggle("off",!chk.classList.contains("on"));
+        const n=bd.querySelectorAll(".fix .chk.on").length; const b=document.getElementById("fixall"); if(b) b.textContent=`Apply ${n} fixes`; return; }
+      if(e.target.id==="fixall"){
+        const idx=[...bd.querySelectorAll(".fix")].filter(f=>f.querySelector(".chk").classList.contains("on")).map(f=>+f.dataset.i);
+        const cleaned=await api().apply_grammar(idx);   // main writes it to the field
+        document.getElementById("bd").innerHTML=renderDoneThenCompress(idx.length); wireStep2();
+        window.__sync();
+        return;
+      }
+      if(e.target.id==="dismiss1"||e.target.id==="dismiss2"){ await api().dismiss(); }
+    };
+  }
+  function wireStep2(){
+    const c=document.getElementById("compress");
+    if(c) c.onclick=async()=>{ renderCompressing(); const r=await api().compress(); if(r&&r.optimized) renderResult(r); else await api().dismiss(); };
+    const d=document.getElementById("dismiss2"); if(d) d.onclick=async()=>{ await api().dismiss(); };
+  }
+
+  // Persistent warm-card entry points (2026-07-23): the Python server calls
+  // these via evaluate_js on every show, so the ONE window re-renders with the
+  // current click's payload instead of a new process being spawned each time.
+  // window.__theme (a light/dark toggle command) was removed entirely on the
+  // Python side (real ask 2026-07-25, light-only) along with its caller here.
+  window.__load=function(p){
+    P=p||{suggestions:[]};
+    document.getElementById("bd").scrollTop=0;
+    document.getElementById("bd").innerHTML=renderStep1();
+    wire(); wireStep2();
+    window.__sync();
+  };
+
+  window.addEventListener("pywebviewready", async ()=>{
+    // The header X is always present; wire it once (it dismisses the card).
+    var cx=document.getElementById("closeX");
+    if(cx) cx.onclick=async()=>{ try{ await api().dismiss(); }catch(e){} };
+    // Initial (hidden) render from the empty seed payload; real content arrives
+    // via window.__load when the server shows the card.
+    try{ P=await api().get_payload(); }catch(e){ P={suggestions:[]}; }
+    document.getElementById("bd").innerHTML=renderStep1();
+    wire(); wireStep2();
+  });
+</script></body></html>
