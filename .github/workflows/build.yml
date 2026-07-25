@@ -46,26 +46,21 @@ jobs:
         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
         shell: pwsh
 
-      # --- SignPath signing goes here once the Foundation application is
-      # approved and a project + signing policy exist to issue a token
-      # against. Left out on purpose rather than stubbed with a fake token,
-      # nothing here should reference a secret that doesn't exist yet.
+      # --- Code signing goes here once the Azure Trusted Signing resource
+      # exists. Left out on purpose rather than stubbed with a fake secret,
+      # nothing here should reference a token that doesn't exist yet.
       #
-      # - name: Submit for signing (SignPath)
+      # - name: Sign installer (Azure Trusted Signing)
       #   shell: pwsh
-      #   env:
-      #     SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
       #   run: |
-      #     Install-Module -Name SignPath -Force
-      #     Submit-SigningRequest `
-      #       -ApiToken $env:SIGNPATH_API_TOKEN `
-      #       -OrganizationId "<org-id>" `
-      #       -ProjectSlug "comprsly" `
-      #       -SigningPolicySlug "release-signing" `
-      #       -ArtifactConfigurationSlug "installer" `
-      #       -InputArtifactPath "installer-output/ComprslySetup.exe" `
-      #       -OutputArtifactPath "installer-output/ComprslySetup-signed.exe" `
-      #       -WaitForCompletion
+      #     dotnet tool install --global sign
+      #     sign code trusted-signing `
+      #       "installer-output/ComprslySetup.exe" `
+      #       --trusted-signing-account "<account-name>" `
+      #       --certificate-profile "<profile-name>" `
+      #       --azure-key-vault-tenant-id "<tenant-id>" `
+      #       --azure-key-vault-client-id "<client-id>" `
+      #       --azure-key-vault-client-secret "${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}"
 
       - name: Upload unsigned build artifacts
         uses: actions/upload-artifact@v4
