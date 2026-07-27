@@ -244,11 +244,43 @@ EVAL_PROMPTS = [
         "meaning_note": "The 'do NOT change the numbers/conclusion' negation "
                         "must survive, not flip to 'change the numbers'.",
     },
+    # --- Bullet-point structure preservation (real ask 2026-07-27) ------
+    # Antonio, direct: dictated/typed bullet-point input should compress to
+    # bullet-point output, not get flattened into a prose paragraph. This
+    # is a STRUCTURE requirement on top of the usual content-retention
+    # check -- see bullet_preserved in _words/run_eval below.
+    {
+        "name": "bullet_week_plan",
+        "text": (
+            "Can you help me plan my week?\n"
+            "- Finish the quarterly report by Friday\n"
+            "- Call the vendor about the late shipment\n"
+            "- Book flights for the conference in Denver\n"
+            "- Follow up with Sarah on the design review"
+        ),
+        "must_keep": ["quarterly report", "friday", "vendor", "shipment",
+                      "flights", "denver", "sarah", "design review"],
+        "is_bulleted": True,
+        "meaning_note": "Source is a bulleted list; the output should stay "
+                        "a bulleted list (or numbered list), not collapse "
+                        "into one prose paragraph.",
+    },
 ]
 
 
 def _words(s):
     return len(re.findall(r"\S+", s or ""))
+
+
+# Two or more list-item-shaped lines, not just one stray dash, before this
+# counts as "the text is actually structured as a list" (real ask
+# 2026-07-27: bullet input should compress to bullet output, not prose).
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
+
+
+def _has_bullet_structure(text):
+    lines = (text or "").split("\n")
+    return sum(1 for ln in lines if _BULLET_LINE_RE.match(ln)) >= 2
 
 
 def _retention(output, must_keep):
@@ -267,11 +299,19 @@ _EXECUTED_OPENERS = re.compile(
     r"of course[,!]|\* |- |\d+\.\s)", re.IGNORECASE)
 
 
-def _looks_executed(text, output):
+def _looks_executed(text, output, allow_bullets=False):
     if not output:
         return False
     if _words(output) > _words(text):
         return True
+    if allow_bullets and _EXECUTED_OPENERS.match(output) and _has_bullet_structure(output):
+        # A deliberately-bulleted case (see is_bulleted in EVAL_PROMPTS)
+        # SHOULD start with "- "/"1. " once the bullet-preservation guard
+        # works -- that's success, not the executed-instead-of-compressed
+        # failure this heuristic normally catches. Only waived when the
+        # output is genuinely list-shaped (2+ item lines), not just any
+        # line starting with a dash.
+        return False
     return bool(_EXECUTED_OPENERS.match(output))
 
 
@@ -290,12 +330,15 @@ def run_eval():
         src_w, out_w = _words(p["text"]), _words(out)
         comp = 1 - (out_w / src_w) if src_w else 0
         ret, missed = _retention(out, p["must_keep"])
-        executed = _looks_executed(p["text"], out)
+        is_bulleted = p.get("is_bulleted", False)
+        executed = _looks_executed(p["text"], out, allow_bullets=is_bulleted)
         over = comp > 0.70
+        bullet_preserved = _has_bullet_structure(out) if is_bulleted else None
         rows.append({
             "name": p["name"], "src_words": src_w, "out_words": out_w,
             "compression": round(comp, 3), "retention": round(ret, 3),
             "missed": missed, "executed": executed, "over_compressed": over,
+            "bullet_preserved": bullet_preserved,
             "seconds": round(elapsed, 1), "output": out,
         })
         flags = []
@@ -305,6 +348,8 @@ def run_eval():
             flags.append("OVER-COMPRESSED")
         if ret < 0.75:
             flags.append("LOW-RETENTION")
+        if is_bulleted and not bullet_preserved:
+            flags.append("BULLETS LOST")
         flag_str = ("  <- " + ", ".join(flags)) if flags else ""
         print(f"  {p['name']:16s}  ret {ret:.2f}  comp {comp:+.0%}  "
               f"{src_w:>3d}->{out_w:<3d}w  {elapsed:4.1f}s{flag_str}")

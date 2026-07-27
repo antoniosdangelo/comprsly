@@ -5,10 +5,10 @@
   :root{
     --font:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
     --font-disp:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
-    --accent:#5738C7;--on-accent:#fff;--green:#2C8A5A;--green-ink:#1E6E43;
+    --accent:#1B1A21;--on-accent:#fff;--green:#6E6B7B;--green-ink:#1B1A21;
     --win:#fff;--card:#FBFAFD;--ground:#F0EFF4;
     --ink:#1B1A21;--muted:#6E6B7B;--faint:#9B98A8;--hair:#ECEAF2;--hair2:#E2DFEC;
-    --logo:url("__BADGE_URI__");--heroglow:color-mix(in srgb,var(--accent) 22%,var(--win));
+    --logo:url("__BADGE_URI__");--mark:url("__MARK_DARK_URI__");--heroglow:color-mix(in srgb,var(--accent) 22%,var(--win));
   }
   /* Light-only (real ask 2026-07-25, Antonio, direct: "get rid of the
      system and dark, only keep light") -- dark @media block and
@@ -16,8 +16,7 @@
   *{box-sizing:border-box;margin:0;padding:0}html,body{height:100%}
   body{font-family:var(--font);color:var(--ink);background:var(--win);-webkit-font-smoothing:antialiased;overflow:hidden}
   .hero{height:132px;position:relative;display:grid;place-items:center;border-bottom:1px solid var(--hair);background:radial-gradient(120% 130% at 50% -10%,var(--heroglow),var(--win) 62%)}
-  .hero .lg{width:70px;height:70px;background:var(--logo) center/contain no-repeat;filter:drop-shadow(0 12px 24px rgba(70,45,160,.4));position:relative;z-index:2}
-  .hero .ring{position:absolute;border-radius:50%;border:1px solid color-mix(in srgb,var(--accent) 26%,transparent);opacity:.6;width:140px;height:140px}.hero .ring.two{width:200px;height:200px;opacity:.3}
+  .hero .lg{width:70px;height:70px;background:var(--mark) center/contain no-repeat;position:relative;z-index:2}
   .body{padding:22px 26px 6px}
   .step{display:none}.step.on{display:block}
   .k{font-size:11px;letter-spacing:.13em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px}
@@ -35,14 +34,14 @@
   .opt .top{display:flex;align-items:center;gap:9px}.opt .top .t{font-size:14px;font-weight:700}
   .opt .tag{margin-left:auto;font-size:10.5px;font-weight:700;padding:3px 9px;border-radius:99px;background:var(--accent);color:var(--on-accent)}.opt .tag.n{background:var(--ground);color:var(--muted)}
   .opt .d{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.5}.opt .d b{color:var(--ink);font-weight:600}
-  .priv{display:flex;align-items:center;gap:8px;justify-content:center;margin:16px 0 2px;font-size:11.5px;color:var(--green-ink);font-weight:600}.priv svg{width:13px;height:13px}
+  .priv{display:flex;align-items:center;gap:8px;justify-content:center;margin:16px 0 2px;font-size:11.5px;color:var(--muted);font-weight:500}.priv svg{width:13px;height:13px}
   .foot{display:flex;align-items:center;gap:12px;padding:14px 26px 20px}
   .dots{display:flex;gap:7px}.dot{width:7px;height:7px;border-radius:50%;background:var(--hair2)}.dot.on{background:var(--accent);width:20px;border-radius:99px}
   .sp{flex:1}
   .btn{border:none;cursor:pointer;font-family:var(--font);font-weight:600;font-size:13.5px;border-radius:10px;padding:11px 20px;background:var(--accent);color:var(--on-accent)}
   .back{background:none;border:none;color:var(--muted);cursor:pointer;font:inherit;font-weight:600;font-size:13px;display:flex;align-items:center;gap:5px}.back svg{width:15px;height:15px}
 </style></head><body>
-  <div class="hero"><div class="ring two"></div><div class="ring"></div><div class="lg"></div></div>
+  <div class="hero"><div class="lg"></div></div>
   <div class="body">
     <div class="step on" data-s="1">
       <div class="k">Welcome</div>
