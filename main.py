@@ -615,7 +615,7 @@ BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 # Displayed in the settings status bar and About. MUST be bumped together
 # with version_info.txt and installer.iss (it drifted to a stale 0.9.4 while
 # those advanced, so the UI lied about the version -- 2026-07-22).
-APP_VERSION = "0.9.89"
+APP_VERSION = "0.9.90"
 
 
 def _heat_color(count):
@@ -3545,10 +3545,16 @@ def get_focused_text():
         text_pattern = _safe_pattern(control, PatternId.TextPattern)
         if text_pattern is not None:
             try:
+                # 2026-07-27: terminals go through the LIVE pattern object,
+                # not a pre-flattened GetText(-1) string -- see
+                # _extract_terminal_input_line's docstring for the live
+                # diagnostic finding this replaced (naive "\n" splitting
+                # silently saw the whole buffer as one line, often).
+                if is_terminal:
+                    text = _log_terminal_extraction(text_pattern)
+                    return text, control
                 text = text_pattern.DocumentRange.GetText(-1)
                 if text:
-                    if is_terminal:
-                        text = _log_terminal_extraction(text)
                     return text, control
             except Exception:
                 pass
@@ -3567,19 +3573,71 @@ def get_focused_text():
 # rather than guess a second time.
 _gft_terminal_last_logged = [None]
 
+# Real, structural bug found live 2026-07-27 (same session, right after
+# v0.9.89 shipped): the whole marker-then-border approach below used to
+# work on a PLAIN STRING via text.split("\n"), on the assumption that a
+# terminal's rendered rows are separated by real newline characters.
+# Confirmed live, via a diagnostic run directly against this exact
+# machine's real terminal, that this assumption is simply wrong some (a
+# lot) of the time: Windows Terminal's TermControl does NOT reliably
+# include "\n"/"\r" characters in TextPattern.DocumentRange.GetText(-1)'s
+# output -- a live 5507-character read had ZERO of either anywhere in
+# it, meaning text.split("\n") returned the WHOLE flattened buffer as a
+# single one-element list, so there were no separate "lines" for the
+# marker/border search to compare against at all. This is the real
+# reason fixes kept not "staying consistent" -- it wasn't the
+# border-matching heuristic being subtly wrong, it was that the data it
+# ran against sometimes had no line structure in it whatsoever.
+#
+# The fix: use UIA's OWN line-unit range navigation instead of string
+# splitting -- ExpandToEnclosingUnit(TextUnit.Line) and
+# Move(TextUnit.Line, +-1) on a TextPatternRange. Confirmed live against
+# the real control that this reliably returns correctly-bounded visual
+# rows regardless of whether "\n" characters are present anywhere,
+# verified against real GetBoundingRectangles() output matching known
+# y-coordinates already used elsewhere in this file for badge
+# positioning (e.g. y=961 lining up exactly with box_rect values seen
+# in debug.log all session).
+#
+# Also confirmed live: a real border row is not guaranteed to be 100%
+# U+2500 characters end-to-end -- an otherwise-clearly-a-border top row
+# was found with non-dash content trailing after roughly the first 30
+# characters. The border check now requires only a solid RUN of border
+# characters at the START of the line (min_run below), not full-line
+# purity, which tolerates that while still correctly rejecting genuine
+# prose (which won't start with a long dash run at all).
+MAX_TERMINAL_WRAPPED_ROWS = 40
 
-def _log_terminal_extraction(text):
+
+def _is_terminal_border_line(text, min_run=10):
+    """A line counts as a border row if it starts with a solid run of at
+    least min_run box-drawing horizontal-line characters (U+2500) once
+    leading/trailing whitespace is stripped -- see the constant comment
+    above for why this is a prefix check, not a full-line purity check."""
+    stripped = text.strip()
+    if len(stripped) < min_run:
+        return False
+    return all(ch == "\u2500" for ch in stripped[:min_run])
+
+
+def _log_terminal_extraction(text_pattern):
     """Runs _extract_terminal_input_line and logs (marker_found,
     original_len, extracted_len) on a state change, never the actual
     text -- same privacy rule as everywhere else. Centralized here (not
     watch_loop) so it covers every get_focused_text() caller, including
     Apply's own fresh capture, not just the analysis tick.
 
-    extracted can now be None (2026-07-27: no marker -> no usable text,
-    see _extract_terminal_input_line), handled explicitly here instead of
-    crashing on len(None)."""
-    original_len = len(text)
-    extracted = _extract_terminal_input_line(text)
+    2026-07-27: now takes the LIVE TextPattern object, not a pre-
+    flattened string -- see _extract_terminal_input_line's docstring
+    and the comment above MAX_TERMINAL_WRAPPED_ROWS for why (real UIA
+    line-unit navigation replaced string.split("\n"))."""
+    try:
+        doc = text_pattern.DocumentRange
+        original_text = doc.GetText(-1)
+    except Exception:
+        return None
+    original_len = len(original_text) if original_text else 0
+    extracted = _extract_terminal_input_line(doc, original_text)
     marker_found = extracted is not None
     extracted_len = len(extracted) if extracted is not None else 0
     state = (marker_found, original_len, extracted_len)
@@ -3592,120 +3650,70 @@ def _log_terminal_extraction(text):
     return extracted
 
 
-def _extract_terminal_input_line(text):
-    """Best-effort isolation of just the CLI's current input line from a
-    terminal's full captured buffer text (real bug found live 2026-07-26:
-    grammar suggestions were flagging "ctrl+t"/"shift+tab", Claude Code's
-    own status-hint text below the input box, not anything the user
-    typed -- same root cause as the runaway-backspace Apply bug this
-    session, get_focused_text() for a terminal returns its ENTIRE visible
-    pane as one blob, not just the input line).
+def _extract_terminal_input_line(doc_range, full_text):
+    """Best-effort isolation of just the CLI's current input line, using
+    real UIA line-unit navigation on doc_range (a live
+    TextPattern.DocumentRange) rather than splitting full_text on "\n"
+    -- see the 2026-07-27 comment above MAX_TERMINAL_WRAPPED_ROWS for the
+    full live-diagnostic finding this replaces. full_text is used only to
+    locate the marker character's offset; all structural navigation from
+    there is done via range operations against doc_range itself, so it
+    works correctly whether or not full_text happens to contain any
+    newline characters.
 
-    Heuristic: Claude Code's CLI prompt marker is "❯" (the "❯" HEAVY
-    RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT) at the start of a line
-    -- CONFIRMED live 2026-07-26 via a privacy-safe codepoint-only
-    diagnostic (never logged the actual text, just the Unicode ordinal of
-    each line's leading character): every real sample showed the exact
-    same structure bottom-up -- a status line, a border (U+2500 "─"), THIS
-    marker, another border, then scrollback. The original guess (plain
-    ASCII "> ") was wrong and never matched at all, silently leaving the
-    entire captured buffer unfiltered the whole time -- that's what caused
-    the "shift+tab" mis-suggestions.
-
-    Real follow-up bug (2026-07-26, same day): requiring a literal
-    trailing space after "❯" ("❯ ") kept intermittently failing --
-    suspected cause is an EMPTY input line rendering the marker with no
-    space (or a different whitespace character) after it when there's no
-    text to follow. Matches on the bare "❯" now and skips whatever
-    whitespace (if any) immediately follows it, rather than requiring one
-    specific space character.
-
-    Real bug found live 2026-07-26 (Antonio, direct repro: "I went to the
-    second row" -- a long prompt wraps across multiple visual rows inside
-    the bordered box): stopping at the first newline only captures ONE
-    wrapped row of a multi-row input, silently truncating the rest.
-    Antonio's own question pointed at the real fix: "how can you
-    recognize the entire chat box within the white lines?" -- those
-    lines ARE the box's real boundary. The already-confirmed structure
-    (see above) has a bottom border made of the box-drawing horizontal
-    line character right after the input, regardless of how many rows
-    the input itself wraps across. Scans line by line from the marker
-    and stops at the first line that's ENTIRELY border characters (or
-    the end of the text), joining every wrapped row in between with a
-    space -- so a multi-row prompt reads as one logical string instead
-    of just its first visual row.
-
-    Real bug found live 2026-07-27 (Antonio, direct repro, in THIS exact
-    session): when the marker can't be found, this used to return the text
-    UNCHANGED -- the whole raw terminal buffer, scrollback and all -- on
-    the theory that "can't make things worse than not having this at all."
-    That reasoning was backwards for a terminal specifically: with no
-    marker, there is no way to know where the real input line is, and
-    handing back thousands of characters of scrollback let the app
-    generate suggestions against random prior output and then, on Apply,
-    actually TYPE a "corrected" version of that scrollback into the live
-    terminal (confirmed live: a 3647-char buffer with a failed marker
-    match got a 3599-char rewrite typed into the terminal). Returns None
-    now instead -- every caller already treats a falsy result as "no
-    usable text, stay hidden," so an unreadable terminal state now safely
-    does nothing rather than editing whatever happens to be on screen.
-
-    Real bug found live 2026-07-27 (same session, later, Antonio direct
-    repro): text.rfind picked the LAST newline-plus-marker anywhere in the
-    buffer, but Claude Code's CLI also echoes every PAST user turn in
-    scrollback with its own leading "❯" -- a plain history line, no box
-    around it. While a reply is actively streaming, the live input box's
-    own marker line may not exist in the capture yet, so rfind landed on a
-    stale, unboxed marker from history instead. From there, the box's
-    bottom-border stop condition never fired -- streamed reply markdown
-    has no all-border-character row -- so collection ran to the end of
-    the buffer, absorbing the ENTIRE streamed reply as "current input"
-    (confirmed live: extracted_len climbing tick over tick, 369 -> 753 ->
-    820 -> 3753 -> capped at 4096, then typed into the real terminal,
-    overwriting Antonio's actual empty input). Fixed by only accepting a
-    marker line as the real input line when the line directly above it is
-    a real border row (the documented box structure: border, marker,
-    border) or it's the very first line captured (no scrollback above it
-    to check) -- an unboxed echoed marker in plain scrollback no longer
-    qualifies, so the search keeps walking further back for a real boxed
-    one instead of stopping on the first (wrong) match."""
-    if not text:
+    Endpoint values 0/1 below are UIA's own TextPatternRangeEndpoint
+    Start/End (standard COM enum, confirmed live via the diagnostic
+    session -- not guessed)."""
+    if not full_text:
+        return None
+    marker_pos = full_text.rfind("\u276f")
+    if marker_pos == -1:
         return None
 
-    def _is_border_row(s):
-        s = s.strip()
-        return bool(s) and all(ch == "─" for ch in s)
-
-    lines = text.split("\n")
-    marker_idx = None
-    for i in range(len(lines) - 1, -1, -1):
-        # Require a real border row directly above -- NOT an "i == 0,
-        # so there is nothing above to check" free pass. That
-        # exemption was tried first and is exactly the loophole a
-        # stale echoed marker slips through when it happens to land
-        # at the start of whatever slice UIA handed back; a live
-        # input box always has a border above it per the confirmed
-        # box structure, so no border above means "cannot verify
-        # this is the live box," not "assume it is."
-        if lines[i].startswith("❯") and i > 0 and _is_border_row(lines[i - 1]):
-            marker_idx = i
-            break
-    if marker_idx is None:
+    try:
+        marker_line = doc_range.Clone()
+        marker_line.MoveEndpointByRange(0, doc_range, 0)
+        marker_line.MoveEndpointByUnit(0, auto.TextUnit.Character, marker_pos)
+        marker_line.MoveEndpointByRange(1, marker_line, 0)
+        marker_line.ExpandToEnclosingUnit(auto.TextUnit.Line)
+        marker_line_text = marker_line.GetText(-1)
+    except Exception:
         return None
 
-    first = lines[marker_idx][1:]
-    # Skip any whitespace right after the marker (a space in the normal
-    # case, possibly nothing at all when the line is empty) without
-    # assuming which.
-    k = 0
-    while k < len(first) and first[k] in " \t\u00a0":
-        k += 1
-    collected = [first[k:].strip()]
-    for ln in lines[marker_idx + 1:]:
-        stripped = ln.strip()
-        if _is_border_row(stripped):
-            break
-        collected.append(stripped)
+    marker_line_stripped = marker_line_text.lstrip()
+    if not marker_line_stripped.startswith("\u276f"):
+        # The rightmost marker character in the buffer isn't at the
+        # start of its own visual line -- it's not the live input row
+        # (e.g. it appears mid-sentence somewhere in scrollback), not
+        # usable as the current-input anchor.
+        return None
+
+    # Real input marker only counts when the line directly above it is a
+    # real border row (confirmed live structure: border, marker, border).
+    try:
+        top = marker_line.Clone()
+        if top.Move(auto.TextUnit.Line, -1) == 0:
+            return None
+        if not _is_terminal_border_line(top.GetText(-1)):
+            return None
+    except Exception:
+        return None
+
+    # Collect the marker's own (possibly multi-row-wrapped) content,
+    # walking forward line by line until the bottom border.
+    collected = [marker_line_stripped[1:].strip()]
+    try:
+        cur = marker_line.Clone()
+        for _ in range(MAX_TERMINAL_WRAPPED_ROWS):
+            if cur.Move(auto.TextUnit.Line, 1) == 0:
+                break
+            row_text = cur.GetText(-1)
+            if _is_terminal_border_line(row_text):
+                break
+            collected.append(row_text.strip())
+    except Exception:
+        return None
+
     return " ".join(s for s in collected if s)
 
 
