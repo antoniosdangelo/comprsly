@@ -177,6 +177,23 @@ def _monitor_dpi():
 DESIGN_POPUP_WIDTH = 560
 DESIGN_BADGE_SIZE = 58
 
+# Floor for _clamp_popup_width_to_host below -- never shrink the card
+# narrower than this even in a tiny host window, past this point text
+# wrapping degrades badly. Real bug caught by reading the actual debug.log
+# after deploying, not by re-deriving the math on paper: an earlier value
+# of 320 here was ABOVE the confirmed real target (~283px, for the exact
+# 912px ChatGPT window Antonio measured against), so the floor silently
+# won and the card never actually reached the size he'd confirmed -- the
+# log showed "560px -> 320px" where "-> ~283px" was expected. Set below
+# that confirmed target so it only bites for windows narrower than this
+# session actually tested. Not related to the per-DPI card sizing this
+# file's history warns against (see scale_for_dpi's "ship one size" essay
+# just below): that essay is about NEVER varying card width by monitor/DPI,
+# which still holds -- DESIGN_POPUP_WIDTH itself never changes. This is a
+# separate axis: capping width against a specific host WINDOW that's
+# narrower than the design width, regardless of which monitor/DPI it's on.
+MIN_POPUP_WIDTH = 260
+
 # A STEP FUNCTION, not a curve. Two outcomes only:
 #
 #     dpi >= 120  ->  1.00   laptop panel and any high-DPI screen
@@ -260,7 +277,27 @@ def badge_scale_for_dpi(dpi):
 # So type is scaled up to sit in the same range as the app underneath rather
 # than the Windows shell. Applied through `tk scaling` in main(), which moves
 # every font in the app at once and keeps their relative hierarchy intact.
-FONT_SCALE = 1.28
+#
+# TWO INDEPENDENT profiles, not one shared constant (real ask 2026-07-26,
+# Antonio, direct: "changing one size affects the other... we never want to
+# have that intertwined... one at a time"). Before this, there was exactly
+# one FONT_SCALE used everywhere, so tuning it for either screen necessarily
+# moved the other -- there was nothing else it COULD do. Same fix shape as
+# BADGE_MONITOR_SCALE above (one value per category, selected by the same
+# dpi>=120 boundary that already reliably tells this laptop panel from the
+# external monitor on this exact hardware): Windows' own physical-size
+# reporting (EDID via GetDeviceCaps/WMI) is notoriously unreliable across
+# arbitrary monitors, so DPI is the practical proxy for "is this a large
+# external monitor (Antonio's own >18in cutoff) or a laptop panel (<=17in)",
+# not a literal inch measurement. Both start at the identical current value
+# so today's look is completely unchanged; each can now be retuned on its
+# own without the other ever moving as a side effect.
+FONT_SCALE_LAPTOP = 1.28
+FONT_SCALE_MONITOR = 1.28
+
+
+def font_scale_for_dpi(dpi):
+    return FONT_SCALE_LAPTOP if dpi >= 120 else FONT_SCALE_MONITOR
 
 # Initial value uses the PRIMARY monitor's DPI directly (no window exists
 # yet at module load to ask apply_scale_for_window's usual way) -- correct
@@ -519,7 +556,8 @@ def apply_scale_for_window(hwnd_or_point):
     BADGE_ICON_SIZE = max(1, int(round(DESIGN_BADGE_SIZE * badge_scale_for_dpi(dpi))))
     log(f"screen changed: {dpi:.0f} dpi -> scale {UI_SCALE:.2f}, "
         f"card {POPUP_WIDTH}px, badge {BADGE_ICON_SIZE}px, "
-        f"text {9 * (96.0/72.0) * UI_SCALE * FONT_SCALE:.0f}px")
+        f"text {9 * (96.0/72.0) * UI_SCALE * font_scale_for_dpi(dpi):.0f}px "
+        f"(font profile: {'laptop' if dpi >= 120 else 'monitor'})")
     for fn in _scale_listeners:
         try:
             fn()
@@ -528,11 +566,56 @@ def apply_scale_for_window(hwnd_or_point):
     return True
 
 
+def clamp_popup_width_to_host(hwnd):
+    """Shrink POPUP_WIDTH when the host app window is small (real report
+    2026-07-26: the card looked oversized in a ~910px, non-maximized
+    ChatGPT window). Runs every watch_loop tick like apply_scale_for_window
+    above, deliberately NOT gated behind that function's DPI-unchanged
+    cache -- a window can be resized without ever changing monitor or DPI,
+    and this has to track that live.
+
+    A pure overflow guard (only shrink once 560px genuinely doesn't fit)
+    turned out not to be enough: verified live against the real reported
+    case, a 912px-wide ChatGPT window, and 560px fits inside it with ~350px
+    to spare -- no overflow, yet it still reads as the card dominating the
+    window. So this caps at a FRACTION of the host width too, not just
+    "does it fit," matching the actual complaint (proportion, not clipping).
+
+    This is NOT the per-screen/DPI card scaling scale_for_dpi's docstring
+    says to never try again -- that essay is about the design width itself
+    varying by MONITOR, which stays exactly 560px here. This only ever
+    shrinks the EFFECTIVE width below that fixed design value, and only
+    when the specific host window is small -- a roomy or maximized window
+    (the common case) always gets the untouched 560px card, on every
+    monitor, exactly as before."""
+    global POPUP_WIDTH
+    design_width = S(DESIGN_POPUP_WIDTH)
+    try:
+        rect = wintypes.RECT()
+        if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            POPUP_WIDTH = design_width
+            return
+        host_width = rect.right - rect.left
+    except Exception:
+        POPUP_WIDTH = design_width
+        return
+    # Antonio's explicit target (2026-07-26, confirmed live against the
+    # real ~912px ChatGPT window): "roughly half" of the 560px design width
+    # in a window that size, i.e. ~280px. 0.31 gives 912*0.31=283px there.
+    # 560px against a maximized ~1920px window stays at 30% of that width,
+    # nowhere near this cap, so the common/roomy case is still untouched.
+    HOST_FRACTION = 0.31
+    new_width = max(S(MIN_POPUP_WIDTH), min(design_width, int(host_width * HOST_FRACTION)))
+    if new_width != POPUP_WIDTH:
+        log(f"card width adjusted for host window ({host_width}px wide): {POPUP_WIDTH}px -> {new_width}px")
+    POPUP_WIDTH = new_width
+
+
 BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 # Displayed in the settings status bar and About. MUST be bumped together
 # with version_info.txt and installer.iss (it drifted to a stale 0.9.4 while
 # those advanced, so the UI lied about the version -- 2026-07-22).
-APP_VERSION = "0.9.81"
+APP_VERSION = "0.9.89"
 
 
 def _heat_color(count):
@@ -553,6 +636,24 @@ def _load_logo_image(size):
         return None
     try:
         img = Image.open(resource_path(os.path.join("assets", "logo.png"))).convert("RGBA")
+        return img.resize((size, size), Image.LANCZOS)
+    except Exception:
+        return None
+
+
+def _load_mark_dark_image(size):
+    """The bare dark 'C/' glyph, no circle/fill behind it -- the same
+    mark_dark.png the web Settings/Onboarding header already uses (see
+    webui.py's __MARK_DARK_URI__). Real ask 2026-07-26: the native review
+    card's header was using the filled-circle badge mark instead, which
+    doesn't match Settings' actual look despite both looking like "a dark
+    icon" at a glance -- Antonio: "making it replicable to the logo on the
+    settings page is the goal." Use this here too so the two surfaces
+    genuinely match, not just resemble each other."""
+    if Image is None:
+        return None
+    try:
+        img = Image.open(resource_path(os.path.join("assets", "mark_dark.png"))).convert("RGBA")
         return img.resize((size, size), Image.LANCZOS)
     except Exception:
         return None
@@ -977,11 +1078,66 @@ def append_history(entry):
 # Run key, independent of the installer's own optional start-on-login task
 # (installer.iss), a direct toggle here shouldn't depend on which install
 # path was used to get the app onto the machine.
+#
+# 2026-07-26 (MSIX/Store prep): a Run-key write is not a reliable way to
+# autostart once the app runs under a packaged identity (MSIX/Desktop
+# Bridge) -- packaged registry writes are virtualized per-package, so this
+# key would either not persist the way a real system Run key does, or would
+# quietly stop working depending on the package's virtualization settings.
+# Microsoft's own documented replacement for packaged apps is a
+# windows.startupTask manifest extension paired with the runtime
+# Windows.ApplicationModel.StartupTask API, so every function below now
+# branches on package identity: unpackaged (today's Inno Setup install)
+# keeps the exact registry behavior that's already shipped and verified;
+# packaged (future MSIX/Store build) uses StartupTask instead. The
+# windows.startupTask <Extension> itself still has to be declared in the
+# AppxManifest.xml the MSIX Packaging Tool generates -- this only handles
+# the runtime side.
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_VALUE_NAME = "Comprsly"
 
+# Must match the TaskId given to the <desktop:StartupTask> element in the
+# packaged app's manifest exactly, or StartupTask.get_async() below can't
+# find it.
+MSIX_STARTUP_TASK_ID = "ComprslyStartupTask"
+
+
+def _is_packaged():
+    """True only under a real package identity (MSIX/Desktop Bridge).
+
+    GetCurrentPackageFullName returns APPMODEL_ERROR_NO_PACKAGE (15700) for
+    every unpackaged process, including today's Inno Setup install and any
+    dev run -- this is the standard, dependency-free way to tell the two
+    apart (no winrt import needed just to check)."""
+    try:
+        length = wintypes.UINT(0)
+        ctypes.windll.kernel32.GetCurrentPackageFullName(ctypes.byref(length), None)
+        return length.value > 0
+    except Exception:
+        return False
+
+
+def _set_launch_on_login_packaged(enabled):
+    """StartupTask side of the toggle, only reachable when _is_packaged().
+
+    Lazy-imported so an unpackaged build never needs the winrt dependency
+    installed at all -- it's only exercised inside a real MSIX package."""
+    from winrt.windows.applicationmodel import startup as wsa
+    task = wsa.StartupTask.get_async(MSIX_STARTUP_TASK_ID).get()
+    if enabled:
+        task.request_enable_async().get()
+    else:
+        task.disable()
+    return True
+
 
 def set_launch_on_login(enabled):
+    if _is_packaged():
+        try:
+            return _set_launch_on_login_packaged(enabled)
+        except Exception:
+            log_exception("set_launch_on_login (packaged)")
+            return False
     try:
         import winreg
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE)
@@ -1003,7 +1159,7 @@ def set_launch_on_login(enabled):
 
 
 def launch_on_login_is_active():
-    """Reads the ACTUAL HKCU Run key rather than trusting settings.json.
+    """Reads the ACTUAL autostart state rather than trusting settings.json.
 
     Real ask 2026-07-22 (UI-backend audit): the Settings toggle initialised
     its checked/unchecked state from APP_SETTINGS["launch_on_login"], which is
@@ -1011,7 +1167,16 @@ def launch_on_login_is_active():
     (a build before heal_launch_on_login existed, a key removed by another
     tool, a settings file carried across machines) the toggle would show ON
     with no key behind it. A toggle that can visibly lie undermines trust in
-    every toggle, so the UI now derives its state from reality via this."""
+    every toggle, so the UI now derives its state from reality via this.
+    Packaged builds ask StartupTask the same question instead of the Run key."""
+    if _is_packaged():
+        try:
+            from winrt.windows.applicationmodel import startup as wsa
+            task = wsa.StartupTask.get_async(MSIX_STARTUP_TASK_ID).get()
+            return task.state == wsa.StartupTaskState.ENABLED
+        except Exception:
+            log_exception("launch_on_login_is_active (packaged)")
+            return False
     try:
         import winreg
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_READ)
@@ -1035,7 +1200,13 @@ def heal_launch_on_login():
     autostart silently did nothing until the user next toggled it. Called
     once at startup: if login-launch is on and the recorded path isn't the
     exe we're actually running from, rewrite it. Never turns autostart ON,
-    only corrects a path the user already opted into."""
+    only corrects a path the user already opted into.
+
+    No-op under a packaged (MSIX) build: StartupTask is keyed to the
+    package identity, not an absolute exe path, so there's nothing here
+    that can go stale the way the Run key value can."""
+    if _is_packaged():
+        return
     if not getattr(sys, "frozen", False):
         return  # dev run: __file__ isn't what the installer registers
     try:
@@ -1056,6 +1227,35 @@ def heal_launch_on_login():
             log(f"heal_launch_on_login: autostart path corrected to {sys.executable}")
     except Exception:
         log_exception("heal_launch_on_login")
+
+
+# The value name the app used before the Compresly -> Comprsly rebrand.
+# heal_launch_on_login above only ever manages RUN_VALUE_NAME ("Comprsly"),
+# so an install that had login-launch enabled under the OLD name kept a
+# second, orphaned Run entry pointing at the no-longer-updated Compresly
+# folder -- both launching on every login. Nothing else would ever create a
+# Run value literally named "Compresly", so it's always safe to remove.
+STALE_RUN_VALUE_NAME = "Compresly"
+
+
+def remove_stale_compresly_startup_entry():
+    """One-time cleanup of the pre-rebrand duplicate startup entry (real bug
+    found live 2026-07-26: two Run-key entries launching what's basically the
+    same app). No-op if it's already gone."""
+    if _is_packaged():
+        return
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE)
+        try:
+            winreg.DeleteValue(key, STALE_RUN_VALUE_NAME)
+            log(f"removed stale '{STALE_RUN_VALUE_NAME}' startup entry from the old rebrand")
+        except FileNotFoundError:
+            pass
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        log_exception("remove_stale_compresly_startup_entry")
 
 
 # Loaded once at import time, mutated in place by SettingsWindow and read
@@ -1255,6 +1455,102 @@ LLM_TITLE_HINTS = {
     "character.ai": "Character.AI",
 }
 
+# Real ask 2026-07-26 (Antonio, direct): recognize an AI CLI (Claude Code,
+# etc.) running INSIDE a terminal, not just the desktop app / browser tab
+# cases above. Explicitly scoped narrower than "any terminal typing" --
+# Antonio's own call: a bare shell prompt (a git command, a plain `ls`)
+# must NOT activate this, only an actual AI CLI running in the foreground.
+#
+# A terminal host process (PowerShell, Windows Terminal, cmd, git bash...)
+# has no structured "compose box" UIA can point at -- it's one scrolling
+# character buffer, not a real control -- so this can't reuse
+# KNOWN_LLM_PROCESSES/app-name matching the way the desktop app case does.
+#
+# FIRST ATTEMPT (window title matching, same idea as LLM_TITLE_HINTS
+# above) was flat wrong: Antonio confirmed the terminal's title is just
+# his own custom session name ("Venture Assistant"), never anything
+# containing "claude" -- a terminal's title is arbitrary and user-chosen,
+# so it can never be a reliable signal here. Removed rather than kept
+# disabled, since it was built on a wrong assumption.
+#
+# What actually works: checked the real process tree live
+# (Get-CimInstance Win32_Process) while a genuine Claude Code CLI session
+# was running, and confirmed it launches as a literal child process named
+# "claude.exe" (`C:\Users\anton\.local\bin\claude.exe --resume`), a few
+# levels below the terminal's own process (terminal -> powershell.exe ->
+# claude.exe). Walking the process tree for a known AI CLI descendant is
+# what this uses instead of the title.
+TERMINAL_HOST_PROCESSES = {
+    "windowsterminal.exe", "powershell.exe", "pwsh.exe", "cmd.exe",
+    "conhost.exe", "wt.exe", "git.exe", "bash.exe", "wsl.exe",
+}
+AI_CLI_DESCENDANT_PROCESSES = {"claude.exe": "Claude Code"}
+
+TH32CS_SNAPPROCESS = 0x00000002
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_ulong),
+        ("cntUsage", ctypes.c_ulong),
+        ("th32ProcessID", ctypes.c_ulong),
+        ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+        ("th32ModuleID", ctypes.c_ulong),
+        ("cntThreads", ctypes.c_ulong),
+        ("th32ParentProcessID", ctypes.c_ulong),
+        ("pcPriClassBase", ctypes.c_long),
+        ("dwFlags", ctypes.c_ulong),
+        ("szExeFile", ctypes.c_wchar * 260),
+    ]
+
+
+def _process_tree_snapshot():
+    """{pid: (parent_pid, lower-case exe name)} for every running process,
+    via the classic Toolhelp32 snapshot API. Returns {} on any failure --
+    same fallback discipline as everywhere else in this file: a failed
+    lookup here should just mean "no AI CLI found", never a crash."""
+    snapshot = {}
+    h = ctypes.windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not h or h == -1:
+        return snapshot
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = ctypes.windll.kernel32.Process32FirstW(h, ctypes.byref(entry))
+        while ok:
+            snapshot[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile.lower())
+            ok = ctypes.windll.kernel32.Process32NextW(h, ctypes.byref(entry))
+    except Exception:
+        pass
+    finally:
+        ctypes.windll.kernel32.CloseHandle(h)
+    return snapshot
+
+
+def _find_ai_cli_descendant(root_pid):
+    """Breadth-first search down the process tree from root_pid (the
+    foreground terminal's own PID) for any process matching
+    AI_CLI_DESCENDANT_PROCESSES. Returns the matched label, or None."""
+    snapshot = _process_tree_snapshot()
+    if not snapshot:
+        return None
+    children_by_parent = {}
+    for pid, (parent_pid, _name) in snapshot.items():
+        children_by_parent.setdefault(parent_pid, []).append(pid)
+    queue = list(children_by_parent.get(root_pid, []))
+    seen = set(queue)
+    while queue:
+        pid = queue.pop(0)
+        _parent, name = snapshot.get(pid, (None, ""))
+        label = AI_CLI_DESCENDANT_PROCESSES.get(name)
+        if label is not None:
+            return label
+        for child in children_by_parent.get(pid, []):
+            if child not in seen:
+                seen.add(child)
+                queue.append(child)
+    return None
+
 # Real gap found 2026-07-25, from Antonio's own debug.log: right after
 # "browser tab mentions 'Claude' but it isn't the page itself, staying
 # inactive" the very next lines show the focused control's own name as
@@ -1435,6 +1731,8 @@ def _llm_title_match(title):
 # check re-runs on every 0.7s poll of the same foreground tab. Holds the
 # last hint label logged.
 _title_reject_logged = [None]
+# Same rate-limit idea, for the terminal/AI-CLI check below.
+_terminal_no_match_logged = [False]
 
 
 def app_label_for(process_name, hwnd):
@@ -1444,6 +1742,21 @@ def app_label_for(process_name, hwnd):
     label = KNOWN_LLM_PROCESSES.get(process_name)
     if label is not None:
         return label
+    if process_name in TERMINAL_HOST_PROCESSES:
+        # Process-tree check, not the title (see AI_CLI_DESCENDANT_PROCESSES
+        # above for why the title never worked). Nothing content-derived is
+        # logged here either way, just whether a known AI CLI process was
+        # found running underneath this terminal.
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        label = _find_ai_cli_descendant(pid.value)
+        if label is not None:
+            _terminal_no_match_logged[0] = False
+            return label
+        if not _terminal_no_match_logged[0]:
+            _terminal_no_match_logged[0] = True
+            log(f"terminal foreground ({process_name}), no AI CLI descendant process found, staying inactive")
+        return None
     if process_name in BROWSER_PROCESS_NAMES:
         title = _raw_window_title(hwnd)
         label = _llm_title_match(title)
@@ -1478,6 +1791,35 @@ def app_label_for(process_name, hwnd):
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
+def _process_name_for_hwnd(hwnd):
+    """Lower-case exe name (e.g. 'claude.exe') owning this window, or None
+    if it can't be determined. Factored out of get_foreground_window_and_
+    process below (2026-07-26) so apply_new_text can ask the same question
+    about a specific already-captured target_hwnd, not just whatever's
+    foreground right now."""
+    try:
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        hproc = ctypes.windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
+        )
+        if not hproc:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(260)
+            size = ctypes.c_uint(260)
+            ok = ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                hproc, 0, buf, ctypes.byref(size)
+            )
+            if not ok:
+                return None
+            return buf.value.rsplit("\\", 1)[-1].lower()
+        finally:
+            ctypes.windll.kernel32.CloseHandle(hproc)
+    except Exception:
+        return None
+
+
 def get_foreground_window_and_process():
     """Returns (hwnd, lower-case exe name e.g. 'claude.exe') of whatever
     window currently has focus, process name is None if it can't be
@@ -1489,27 +1831,7 @@ def get_foreground_window_and_process():
     before that happens, so apply_new_text can force it back before pasting,
     see SetForegroundWindow call there."""
     hwnd = ctypes.windll.user32.GetForegroundWindow()
-    try:
-        pid = ctypes.c_ulong()
-        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        hproc = ctypes.windll.kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value
-        )
-        if not hproc:
-            return hwnd, None
-        try:
-            buf = ctypes.create_unicode_buffer(260)
-            size = ctypes.c_uint(260)
-            ok = ctypes.windll.kernel32.QueryFullProcessImageNameW(
-                hproc, 0, buf, ctypes.byref(size)
-            )
-            if not ok:
-                return hwnd, None
-            return hwnd, buf.value.rsplit("\\", 1)[-1].lower()
-        finally:
-            ctypes.windll.kernel32.CloseHandle(hproc)
-    except Exception:
-        return hwnd, None
+    return hwnd, _process_name_for_hwnd(hwnd)
 
 
 class _SimpleRect:
@@ -1567,11 +1889,23 @@ def get_caret_screen_rect():
 GWL_EXSTYLE = -20
 WS_EX_NOACTIVATE = 0x08000000
 WS_EX_TOOLWINDOW = 0x00000080
+# SetWindowPos flags, used below only to force Windows to re-evaluate the
+# taskbar/frame after an EXSTYLE change on an already-created window --
+# MSDN documents this as required (SetWindowLongPtr alone doesn't trigger
+# it): "If you have changed certain window data using SetWindowLong, you
+# must call SetWindowPos... with the SWP_FRAMECHANGED flag." No position/
+# size/z-order/activation change is wanted, just the frame refresh.
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
 
 
 def make_window_non_activating(tk_window):
     """Marks a Tk window WS_EX_NOACTIVATE so clicking it never steals
-    keyboard focus from the app underneath (Claude's input box).
+    keyboard focus from the app underneath (Claude's input box), and
+    WS_EX_TOOLWINDOW so it doesn't get its own taskbar button.
 
     Real root-cause bug found 2026-07-20: this MUST run after the window is
     realized. Before realization GetParent() returns 0, and
@@ -1583,12 +1917,42 @@ def make_window_non_activating(tk_window):
     Apply appeared to do nothing. Verified directly: pre-realize the target
     HWND is 0 and the flag never sticks; post-realize it applies. Now this
     realizes the window itself, falls back to the window's own HWND if it
-    has no parent, and logs if the flag still didn't take."""
+    has no parent, and logs if the flag still didn't take.
+
+    Real ask 2026-07-26 (Antonio: "I would rather have it not pop up at all"
+    -- WS_EX_TOOLWINDOW alone was showing up in the taskbar anyway on some
+    configs): added the SetWindowPos/SWP_FRAMECHANGED call below, which
+    MSDN documents as required for an EXSTYLE change to actually take
+    effect on a window that already exists (SetWindowLongPtr changes the
+    stored style bits, but doesn't by itself make Windows re-decide
+    anything about the window's frame/taskbar presence). Paired with the
+    caller now also giving the window a real owner via .transient() --
+    together these are the two actual documented conditions for a tool
+    window to never get a taskbar button, not just look different once it
+    has one."""
     tk_window.update_idletasks()
     hwnd = ctypes.windll.user32.GetParent(tk_window.winfo_id()) or tk_window.winfo_id()
     style = ctypes.windll.user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
     style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
     ctypes.windll.user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
+    try:
+        # Explicit argtypes/restype, not left to ctypes' default guessing --
+        # a different SetWindowPos call elsewhere in this app's history was
+        # a real, hard-to-catch crash from exactly that (a 64-bit HWND
+        # silently truncated/misread with no argtypes declared). Cheap
+        # insurance against repeating the same class of bug here.
+        user32 = ctypes.windll.user32
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, wintypes.UINT,
+        ]
+        user32.SetWindowPos.restype = wintypes.BOOL
+        user32.SetWindowPos(
+            hwnd, None, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+    except Exception:
+        log_exception("make_window_non_activating: SetWindowPos frame refresh")
     applied = bool(
         ctypes.windll.user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE
     )
@@ -2488,14 +2852,30 @@ def _focus_is_on_expected_field(expected_old_text):
             text we analysed does).
     False = verified no (focus is somewhere else entirely).
     None  = unverifiable, the field exposes no readable text through UIA.
-    """
+
+    Real bug found live 2026-07-27 (Antonio, right after the terminal
+    fail-safe fix below): a terminal that briefly can't find its own "❯"
+    marker now correctly reads as no-usable-text (get_focused_text()
+    returns None) instead of the old, dangerous whole-buffer fallback --
+    but this call site is reached from apply_new_text right after
+    force_foreground(), before the terminal has necessarily finished
+    repainting, so a single read landing in that window read as
+    "unverifiable" and aborted an otherwise-legitimate Apply. A momentary
+    marker miss right after regaining focus is a timing issue, not a real
+    "can't find your input line" case, so it's worth a couple of quick
+    retries here specifically, rather than weakening the fail-safe itself
+    (which must stay strict: never treat an unmarked buffer as the real
+    field)."""
     tail = _text_tail(expected_old_text)
     if not tail:
         return None
-    text, _ = get_focused_text()
-    if text is None:
-        return None
-    return tail in text
+    for attempt in range(3):
+        text, _ = get_focused_text()
+        if text is not None:
+            return tail in text
+        if attempt < 2:
+            time.sleep(0.08)
+    return None
 
 
 def _point_is_in_window(pos, hwnd):
@@ -2561,8 +2941,33 @@ def restore_field_focus(target_hwnd, target_control, expected_old_text):
 
     Returns True (verified in the field), None (couldn't verify, but we did
     click back into it, so proceeding is reasonable), or False (focus is
-    provably elsewhere, the caller must NOT send Ctrl+A)."""
-    force_foreground(target_hwnd)
+    provably elsewhere, the caller must NOT send Ctrl+A).
+
+    Real bug found live 2026-07-27 (Antonio: "it was working last night,
+    what happened" -- right after the terminal marker fail-safe landed):
+    the text-based verification below depends on re-finding the "❯"
+    marker RIGHT NOW, but the marker is legitimately absent from a
+    terminal's own rendering for long stretches while the CLI is actively
+    working (tens of seconds, not a brief blink -- confirmed in the log,
+    not guessed). A short retry wasn't enough because the gap itself is
+    long, not just a one-off race. The text-check was built for a
+    DIFFERENT problem though (Electron/browser composers where the same
+    window hosts multiple text areas, so confirming the right WINDOW
+    isn't enough). A terminal doesn't have that ambiguity -- the whole
+    window IS the one interactive surface -- so for a terminal target,
+    force_foreground succeeding on the exact hwnd we captured at
+    suggestion-time is already sufficient confirmation, without needing a
+    second, marker-dependent text re-check that can legitimately be
+    unavailable for reasons that have nothing to do with whether focus is
+    actually correct."""
+    is_terminal_target = _process_name_for_hwnd(target_hwnd) in TERMINAL_HOST_PROCESSES
+    landed = force_foreground(target_hwnd)
+    if is_terminal_target:
+        if landed:
+            log("restore_field_focus (terminal): trusting force_foreground, no text re-check needed")
+            return True
+        log("restore_field_focus (terminal): force_foreground did not land on target, refusing to select-all")
+        return False
     verdict = _focus_is_on_expected_field(expected_old_text)
     if verdict is True:
         log("restore_field_focus: focus already inside the target field")
@@ -2601,6 +3006,22 @@ def restore_field_focus(target_hwnd, target_control, expected_old_text):
         f"(verdict={verdict}, last_click={pos}), refusing to select-all"
     )
     return False
+
+
+def _sendkeys_escape(text):
+    """Escapes literal text for auto.SendKeys's mini-language -- the same
+    special characters Windows Forms SendKeys.Send reserves: + ^ % ~ ( ) { }.
+    Needed by apply_new_text's terminal branch (2026-07-26), which types
+    the replacement out as real keystrokes rather than a clipboard paste;
+    without escaping, any of these in the actual text would be misread as
+    modifier/grouping syntax instead of the literal character."""
+    out = []
+    for ch in text:
+        if ch in "+^%~(){}":
+            out.append("{" + ch + "}")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
@@ -2722,6 +3143,177 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
             )
             log("apply_new_text: ABORTED, focus not in the target field, nothing selected or pasted")
             return False
+
+        # Real ask 2026-07-26 (Antonio, direct): the clipboard+Ctrl+V path
+        # below is a genuine OS paste event, which terminals can flag via
+        # bracketed paste mode regardless of content length -- that's
+        # exactly what was triggering Claude Code CLI's own "large paste"
+        # permission dialog and "[Pasted text #N]" placeholder collapse on
+        # every Apply, even a short one-line fix. Real terminal behavior,
+        # not a Comprsly bug, but avoidable: type the replacement out as
+        # REAL KEYSTROKES instead, which reads as fast typing, not a
+        # paste, so neither of those fire.
+        #
+        # Deliberately NOT the Ctrl+A the clipboard path uses below:
+        # readline-style terminals bind Ctrl+A to "move to start of line",
+        # not "select all" the way a GUI text box does -- reusing it here
+        # would silently corrupt the line instead of clearing it.
+        # Backspaces clear exactly what was there instead, character by
+        # character. Assumes the caret is at the END of the existing text
+        # (the normal state right after typing); not exhaustive for a
+        # cursor deliberately moved mid-line first.
+        if _process_name_for_hwnd(target_hwnd) in TERMINAL_HOST_PROCESSES:
+            old_len = len(expected_old_text) if expected_old_text else 0
+            # Real ask 2026-07-26 (Antonio, direct: select-and-delete the
+            # existing text like a mouse selection would, not one backspace
+            # per character). Home moves to the start of the current input
+            # line, Shift+End selects everything from there to the end of
+            # the line, Delete removes the selection -- three keystroke
+            # events total, regardless of how long the line is. Replaces
+            # the earlier {BACK n}-per-character approach, which was also
+            # what a bad (too-long) text read used to freeze the app
+            # sending -- that whole failure mode is gone now, not just
+            # capped, since this never scales with old_len at all.
+            # HOME/END/SHIFT/DELETE verified against auto.SpecialKeyNames
+            # directly before using them, same discipline as BACK earlier
+            # (which turned out not to be the real key name).
+            _self_injecting[0] = True
+            try:
+                if old_len:
+                    # Real ask 2026-07-26 (Antonio, direct: backspacing is
+                    # unappealing, wants instant delete-and-replace like
+                    # the browser/app versions already have). Ctrl+U
+                    # ("kill line before cursor") is close to a universal
+                    # terminal/readline convention -- bash, zsh, and
+                    # virtually every Node-based CLI input widget
+                    # implements it. Confirmed working live (Antonio: "it
+                    # is deleting everything quickly and at once"). No
+                    # backspace fallback anymore, on Antonio's explicit
+                    # call ("I dont want the backspace") -- Ctrl+U alone,
+                    # full stop. Verified the exact key dispatch via a
+                    # mocked dry-run (no real input sent) before ever
+                    # using it live.
+                    #
+                    # Real bug found live 2026-07-26 (Antonio, direct
+                    # repro: "I went to the second row" -- same
+                    # wrapped-line issue that hit the earlier Shift+End
+                    # attempt): a single Ctrl+U likely only kills the
+                    # CURRENT visual row, not the whole wrapped multi-row
+                    # input, leaving earlier rows behind for the new text
+                    # to land next to. Repeats it (still just Ctrl+U, no
+                    # backspace) with a fresh get_focused_text() check
+                    # between presses, stopping as soon as the field
+                    # reads effectively empty (len<=1 tolerates the
+                    # terminal's own cursor glyph being read back as a
+                    # phantom character, same finding as the earlier
+                    # backspace-loop bug). Still fast: each press is one
+                    # keystroke, and a real prompt only wraps a handful of
+                    # rows at most, capped generously so it can't run
+                    # away.
+                    # Real bug found live 2026-07-27 (Antonio: "it pasted my
+                    # new prompt without clearing the first"): get_focused_
+                    # text() now correctly returns None when the marker
+                    # can't be found (e.g. mid-clear, before the CLI has
+                    # repainted), but this loop's exit check treated that
+                    # UNREADABLE state exactly the same as CONFIRMED EMPTY --
+                    # `not remaining` is True for both "" and None -- so a
+                    # single unreadable tick broke the loop after only one
+                    # Ctrl+U, before the line was actually cleared, and the
+                    # new text landed next to whatever was left. Only a
+                    # DEFINITE empty reading (remaining is not None) should
+                    # stop early now; an unreadable tick keeps pressing
+                    # Ctrl+U up to the existing cap instead of assuming
+                    # success.
+                    # Real bug found live 2026-07-27 (same session,
+                    # later): a fixed cap of 8 Ctrl+U presses assumed
+                    # "a real prompt only wraps a handful of rows at
+                    # most" -- true for typed prompts, not necessarily
+                    # for a long DICTATED or PASTED one (Antonio uses
+                    # both), which can wrap into far more rows than
+                    # that. Hitting the cap before the line is
+                    # actually clear reproduces the exact "pasted
+                    # without clearing the first" symptom this loop
+                    # exists to prevent, just from a different cause
+                    # (cap too low instead of stopping too early).
+                    # Scales the cap off old_len instead of a fixed
+                    # guess, reusing the same CHARS_PER_LINE_GUESS
+                    # wrap-width estimate already relied on elsewhere
+                    # in this file for badge positioning -- doubled
+                    # for headroom (an estimate, not a measurement, so
+                    # it should err toward extra presses, which are
+                    # harmless once the line is already clear), floor
+                    # of 8 so short prompts behave exactly as before,
+                    # hard ceiling of 60 so a pathological old_len
+                    # still cannot hang Apply for long (worst case
+                    # ~5s, and only ever reached if something is
+                    # genuinely stuck, not in normal use).
+                    estimated_rows = old_len // CHARS_PER_LINE_GUESS + 1
+                    clear_attempts = min(max(estimated_rows * 2, 8), 60)
+                    for _ in range(clear_attempts):
+                        auto.SendKeys("{Ctrl}u", waitTime=0.01)
+                        time.sleep(0.08)
+                        remaining, _ = get_focused_text()
+                        if remaining is not None and len(remaining) <= 1:
+                            break
+                    time.sleep(0.1)
+                    pre_type, _ = get_focused_text()
+                    log(f"apply_new_text (terminal): about to type, field reads len={len(pre_type) if pre_type else 0} right before")
+
+                    # Real bug found live 2026-07-27 (same session,
+                    # later, Antonio direct repro: a long paste made
+                    # the terminal fall back to the keystroke buffer
+                    # for suggestions -- source=buffer in debug.log --
+                    # and the clearing loop above never once got a
+                    # readable state back (zero terminal-extraction log
+                    # lines for its whole run), meaning Ctrl+U almost
+                    # certainly was not clearing anything at all (most
+                    # likely Claude Code CLI's own large-paste handling
+                    # -- a confirmation prompt or collapsed placeholder
+                    # -- put the box in a state that never matched the
+                    # normal bordered-input structure this code
+                    # assumes). The old code typed the new text
+                    # regardless of whether pre_type ever confirmed
+                    # empty -- that fallthrough is the actual gap, not
+                    # anything about WHY the field was unreadable this
+                    # time. Same fail-closed principle already applied
+                    # to the read side (an unreadable marker returns
+                    # None instead of guessing): only a DEFINITE empty
+                    # reading is good enough to type onto. Anything
+                    # else -- still has content, OR still unreadable --
+                    # aborts instead of risking a second corrupted
+                    # write on top of whatever is actually there.
+                    confirmed_cleared = pre_type is not None and len(pre_type) <= 1
+                    if not confirmed_cleared:
+                        state_desc = "unreadable" if pre_type is None else f"still has {len(pre_type)} chars"
+                        log(f"apply_new_text (terminal): ABORTED, could not confirm the field was cleared before typing ({state_desc})")
+                        popup.show_error(
+                            *popup.last_position(),
+                            "Comprsly could not confirm your terminal input was fully "
+                            "cleared, so it left it untouched rather than risk typing "
+                            "over it.\n\nPlease clear the input line yourself and try "
+                            "again.",
+                        )
+                        return False
+                auto.SendKeys(_sendkeys_escape(new_text), waitTime=0.01)
+            finally:
+                _self_injecting[0] = False
+            set_typed_buffer(new_text)
+            landed_text, _ = get_focused_text()
+            tail = _text_tail(new_text)
+            if landed_text is None:
+                verified = "unreadable"
+            elif tail and tail in landed_text:
+                verified = "yes"
+            else:
+                verified = "NO"
+            if dismiss_after:
+                popup.dismiss()
+            log(
+                f"applied via terminal keystroke-typing (no clipboard/paste), "
+                f"new text length={len(new_text)}, dismiss_after={dismiss_after}, "
+                f"paste_landed={verified}"
+            )
+            return True
 
         # Full-format snapshot, not just text (2026-07-22 market audit): a
         # screenshot/copied-files clipboard used to be destroyed by Apply and
@@ -2867,13 +3459,74 @@ def _safe_pattern(control, pattern_id):
         return None
 
 
+def _owning_hwnd_for_control(control):
+    """The real top-level window a UIA control belongs to (2026-07-27, see
+    get_focused_text's terminal-detection fix below for the bug this
+    exists to close). Many UIA elements -- especially deeply nested ones
+    inside a modern terminal's single render surface -- report
+    NativeWindowHandle as 0, they aren't backed by their own HWND. Walk up
+    the UIA ancestor chain until one is, then resolve that HWND's real
+    top-level ancestor the same way _host_window_rect already does
+    (GA_ROOT), so a child pane's handle doesn't get mistaken for the
+    actual application window."""
+    try:
+        node = control
+        hwnd = 0
+        for _ in range(8):  # a real UI tree is never this deep to a window
+            if node is None:
+                break
+            hwnd = getattr(node, "NativeWindowHandle", 0) or 0
+            if hwnd:
+                break
+            node = node.GetParentControl()
+        if not hwnd:
+            return 0
+        GA_ROOT = 2
+        return ctypes.windll.user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+    except Exception:
+        return 0
+
+
 def get_focused_text():
     """Text of the currently focused control, i.e. the active chat box,
-    whatever app or site it lives in. Returns (text, control)."""
+    whatever app or site it lives in. Returns (text, control).
+
+    Real bug found live 2026-07-26: the terminal input-line extraction
+    used to be applied at exactly ONE call site (the watch_loop analysis
+    tick), so suggestions looked right, but Apply -- which independently
+    calls this same function fresh to capture expected_old_text -- still
+    got the terminal's ENTIRE unfiltered buffer, tripping the safety cap
+    and refusing to do anything ("apply does nothing"). Patching every
+    individual call site is exactly the kind of thing that's easy to miss
+    one of; doing the extraction HERE instead means every caller,
+    present and future, gets it automatically."""
     try:
         control = auto.GetFocusedControl()
         if control is None:
             return None, None
+
+        # Real bug found live 2026-07-27 (Antonio, screenshot: suggestions
+        # for text that wasn't there, garbage like "prompt.S" -> "prompts."
+        # showing over an empty terminal input): this used to ask "is the
+        # FOREGROUND window a terminal", a SEPARATE query from `control`
+        # above. Those two can briefly disagree -- the foreground window and
+        # whatever UIA currently calls "the focused control" are tracked
+        # independently by Windows and aren't guaranteed to be the same
+        # window on every tick. When they disagree, `is_terminal` was
+        # computed from the WRONG window while `control`'s own text still
+        # came from the terminal, so the terminal-input-line filter got
+        # silently skipped and the terminal's ENTIRE raw scrollback buffer
+        # was treated as "the current input" instead, running grammar/
+        # spelling suggestions against whatever text happened to be on
+        # screen. Fixed by asking the SAME control that's about to be read
+        # which window it actually belongs to, so the two can never
+        # disagree.
+        is_terminal = False
+        try:
+            is_terminal = _process_name_for_hwnd(
+                _owning_hwnd_for_control(control)) in TERMINAL_HOST_PROCESSES
+        except Exception:
+            is_terminal = False
 
         # Plain fields (textarea, input, native edits) expose ValuePattern.
         value_pattern = _safe_pattern(control, PatternId.ValuePattern)
@@ -2881,6 +3534,8 @@ def get_focused_text():
             try:
                 value = value_pattern.Value
                 if value:
+                    if is_terminal:
+                        value = _log_terminal_extraction(value)
                     return value, control
             except Exception:
                 pass
@@ -2892,6 +3547,8 @@ def get_focused_text():
             try:
                 text = text_pattern.DocumentRange.GetText(-1)
                 if text:
+                    if is_terminal:
+                        text = _log_terminal_extraction(text)
                     return text, control
             except Exception:
                 pass
@@ -2902,6 +3559,154 @@ def get_focused_text():
         # (elevated windows, controls that vanish mid-read, etc.), skip
         # this cycle rather than crash the watcher.
         return None, None
+
+
+# State-change tracker for _log_terminal_extraction below -- re-added
+# 2026-07-26 after Apply kept failing even once the marker itself was
+# confirmed correct, to see WHY it's still intermittently not matching
+# rather than guess a second time.
+_gft_terminal_last_logged = [None]
+
+
+def _log_terminal_extraction(text):
+    """Runs _extract_terminal_input_line and logs (marker_found,
+    original_len, extracted_len) on a state change, never the actual
+    text -- same privacy rule as everywhere else. Centralized here (not
+    watch_loop) so it covers every get_focused_text() caller, including
+    Apply's own fresh capture, not just the analysis tick.
+
+    extracted can now be None (2026-07-27: no marker -> no usable text,
+    see _extract_terminal_input_line), handled explicitly here instead of
+    crashing on len(None)."""
+    original_len = len(text)
+    extracted = _extract_terminal_input_line(text)
+    marker_found = extracted is not None
+    extracted_len = len(extracted) if extracted is not None else 0
+    state = (marker_found, original_len, extracted_len)
+    if state != _gft_terminal_last_logged[0]:
+        _gft_terminal_last_logged[0] = state
+        log(
+            f"get_focused_text terminal extraction: marker_found={marker_found}, "
+            f"original_len={original_len}, extracted_len={extracted_len}"
+        )
+    return extracted
+
+
+def _extract_terminal_input_line(text):
+    """Best-effort isolation of just the CLI's current input line from a
+    terminal's full captured buffer text (real bug found live 2026-07-26:
+    grammar suggestions were flagging "ctrl+t"/"shift+tab", Claude Code's
+    own status-hint text below the input box, not anything the user
+    typed -- same root cause as the runaway-backspace Apply bug this
+    session, get_focused_text() for a terminal returns its ENTIRE visible
+    pane as one blob, not just the input line).
+
+    Heuristic: Claude Code's CLI prompt marker is "❯" (the "❯" HEAVY
+    RIGHT-POINTING ANGLE QUOTATION MARK ORNAMENT) at the start of a line
+    -- CONFIRMED live 2026-07-26 via a privacy-safe codepoint-only
+    diagnostic (never logged the actual text, just the Unicode ordinal of
+    each line's leading character): every real sample showed the exact
+    same structure bottom-up -- a status line, a border (U+2500 "─"), THIS
+    marker, another border, then scrollback. The original guess (plain
+    ASCII "> ") was wrong and never matched at all, silently leaving the
+    entire captured buffer unfiltered the whole time -- that's what caused
+    the "shift+tab" mis-suggestions.
+
+    Real follow-up bug (2026-07-26, same day): requiring a literal
+    trailing space after "❯" ("❯ ") kept intermittently failing --
+    suspected cause is an EMPTY input line rendering the marker with no
+    space (or a different whitespace character) after it when there's no
+    text to follow. Matches on the bare "❯" now and skips whatever
+    whitespace (if any) immediately follows it, rather than requiring one
+    specific space character.
+
+    Real bug found live 2026-07-26 (Antonio, direct repro: "I went to the
+    second row" -- a long prompt wraps across multiple visual rows inside
+    the bordered box): stopping at the first newline only captures ONE
+    wrapped row of a multi-row input, silently truncating the rest.
+    Antonio's own question pointed at the real fix: "how can you
+    recognize the entire chat box within the white lines?" -- those
+    lines ARE the box's real boundary. The already-confirmed structure
+    (see above) has a bottom border made of the box-drawing horizontal
+    line character right after the input, regardless of how many rows
+    the input itself wraps across. Scans line by line from the marker
+    and stops at the first line that's ENTIRELY border characters (or
+    the end of the text), joining every wrapped row in between with a
+    space -- so a multi-row prompt reads as one logical string instead
+    of just its first visual row.
+
+    Real bug found live 2026-07-27 (Antonio, direct repro, in THIS exact
+    session): when the marker can't be found, this used to return the text
+    UNCHANGED -- the whole raw terminal buffer, scrollback and all -- on
+    the theory that "can't make things worse than not having this at all."
+    That reasoning was backwards for a terminal specifically: with no
+    marker, there is no way to know where the real input line is, and
+    handing back thousands of characters of scrollback let the app
+    generate suggestions against random prior output and then, on Apply,
+    actually TYPE a "corrected" version of that scrollback into the live
+    terminal (confirmed live: a 3647-char buffer with a failed marker
+    match got a 3599-char rewrite typed into the terminal). Returns None
+    now instead -- every caller already treats a falsy result as "no
+    usable text, stay hidden," so an unreadable terminal state now safely
+    does nothing rather than editing whatever happens to be on screen.
+
+    Real bug found live 2026-07-27 (same session, later, Antonio direct
+    repro): text.rfind picked the LAST newline-plus-marker anywhere in the
+    buffer, but Claude Code's CLI also echoes every PAST user turn in
+    scrollback with its own leading "❯" -- a plain history line, no box
+    around it. While a reply is actively streaming, the live input box's
+    own marker line may not exist in the capture yet, so rfind landed on a
+    stale, unboxed marker from history instead. From there, the box's
+    bottom-border stop condition never fired -- streamed reply markdown
+    has no all-border-character row -- so collection ran to the end of
+    the buffer, absorbing the ENTIRE streamed reply as "current input"
+    (confirmed live: extracted_len climbing tick over tick, 369 -> 753 ->
+    820 -> 3753 -> capped at 4096, then typed into the real terminal,
+    overwriting Antonio's actual empty input). Fixed by only accepting a
+    marker line as the real input line when the line directly above it is
+    a real border row (the documented box structure: border, marker,
+    border) or it's the very first line captured (no scrollback above it
+    to check) -- an unboxed echoed marker in plain scrollback no longer
+    qualifies, so the search keeps walking further back for a real boxed
+    one instead of stopping on the first (wrong) match."""
+    if not text:
+        return None
+
+    def _is_border_row(s):
+        s = s.strip()
+        return bool(s) and all(ch == "─" for ch in s)
+
+    lines = text.split("\n")
+    marker_idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        # Require a real border row directly above -- NOT an "i == 0,
+        # so there is nothing above to check" free pass. That
+        # exemption was tried first and is exactly the loophole a
+        # stale echoed marker slips through when it happens to land
+        # at the start of whatever slice UIA handed back; a live
+        # input box always has a border above it per the confirmed
+        # box structure, so no border above means "cannot verify
+        # this is the live box," not "assume it is."
+        if lines[i].startswith("❯") and i > 0 and _is_border_row(lines[i - 1]):
+            marker_idx = i
+            break
+    if marker_idx is None:
+        return None
+
+    first = lines[marker_idx][1:]
+    # Skip any whitespace right after the marker (a space in the normal
+    # case, possibly nothing at all when the line is empty) without
+    # assuming which.
+    k = 0
+    while k < len(first) and first[k] in " \t\u00a0":
+        k += 1
+    collected = [first[k:].strip()]
+    for ln in lines[marker_idx + 1:]:
+        stripped = ln.strip()
+        if _is_border_row(stripped):
+            break
+        collected.append(stripped)
+    return " ".join(s for s in collected if s)
 
 
 # Small inset from the box's OWN right edge, not a floating gap outside it
@@ -2916,7 +3721,29 @@ def get_focused_text():
 # floats OUTSIDE the box. The 2026-07-25 direction is the opposite -- inside,
 # docked to the box's own edge like Grammarly's -- so the old wide gap would
 # now read as the badge drifting away from the box instead of nesting in it.
-BADGE_INSIDE_INSET = S(10)
+#
+# Widened 10 -> 16 (2026-07-26, Antonio, direct: "the badge green circle is
+# close to crossing over the line of the chat box"). The heat-status dot
+# sits in the badge's own bottom-right corner (see _make_heat_badge_image),
+# so it was closer to the box's edge than the 10px inset alone suggests --
+# widening the whole badge's inset gives the dot room too, not just the
+# badge's own outline.
+BADGE_INSIDE_INSET = S(16)
+
+# Approximate height of the CLI's own bordered input box (top border, the
+# ">" prompt line, bottom border) within a terminal's single accessible
+# TermControl, which otherwise covers the entire pane -- see the raw_rect
+# slicing in watch_loop. FIRST-PASS ESTIMATE (Antonio's own screenshot of
+# the box, not a measured font/line-height), expect to retune once seen
+# live against a real rendered layout.
+TERMINAL_INPUT_BOX_HEIGHT_GUESS = S(70)
+
+# Window-relative fallback ONLY (2026-07-26) -- for a terminal where UIA
+# exposes no control at all (unlike Windows Terminal's TermControl, which
+# the slicing above now handles as a real box). Kept as a last-resort
+# safety net, not the primary path anymore.
+TERMINAL_STATUS_LEFT_OFFSET = S(230)
+TERMINAL_STATUS_BOTTOM_OFFSET = S(25)
 
 # Rough stand-in for "the compose box's right edge" on apps with no
 # accessible control to actually measure it from (Claude's Electron
@@ -3063,6 +3890,16 @@ class PersistentBadge:
         if self.window is not None:
             return
         win = tk.Toplevel(self.root)
+        # REVERTED 2026-07-26: .transient(self.root) was tried here to stop
+        # the taskbar entry, but self.root is the app's hidden, permanently-
+        # withdrawn main Tk root -- tying a transient window to a withdrawn
+        # owner stopped this window from ever showing at all (real
+        # regression, caught immediately: "the pop up on the chat box isn't
+        # showing up"). Reverted; the SWP_FRAMECHANGED refresh in
+        # make_window_non_activating is the safer half of that fix and
+        # stays. Do not re-add transient() against self.root specifically
+        # without first un-withdrawing it or transienting against some
+        # other, actually-visible window.
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BRAND_DARK)
@@ -3102,6 +3939,31 @@ class PersistentBadge:
 
         win.update_idletasks()
         make_window_non_activating(win)
+        # Real bug found 2026-07-26: WS_EX_TOOLWINDOW (set above) is meant to
+        # keep this window out of the taskbar entirely, but if a taskbar
+        # entry shows up anyway on some Windows configs, it fell back to the
+        # default Tk/Tcl feather icon since nothing set a real one. Belt and
+        # suspenders: set the real logo too, so the wrong icon can never show
+        # even if the toolwindow suppression doesn't fully take.
+        taskbar_icon = _load_app_icon_image(32)
+        if taskbar_icon is not None:
+            self._taskbar_icon_photo = ImageTk.PhotoImage(taskbar_icon)
+            try:
+                win.iconphoto(True, self._taskbar_icon_photo)
+            except Exception:
+                pass
+        # Same taskbar-entry-shows-up-anyway case, but for the hover tooltip
+        # text rather than the icon image (real report 2026-07-26: "it says
+        # Tk and not Comprsly"). A Toplevel's window title defaults to the
+        # literal string "tk" until something sets it -- nobody ever had,
+        # since this window's own title bar is hidden by overrideredirect,
+        # so it looked like there was nothing to set. The taskbar/Alt-Tab
+        # tooltip reads the title regardless of whether a title bar is
+        # visible.
+        try:
+            win.title(BRAND_NAME)
+        except Exception:
+            pass
         self.window = win
 
     def rebuild_for_scale(self):
@@ -3364,9 +4226,9 @@ POPUP_WIDTH = S(DESIGN_POPUP_WIDTH)
 # this as a literal in four render paths meant fixing it three times.
 STEP2_TITLE = "Make it concise"
 POPUP_MUTED_BTN = "#2c2b34"
-ACCENT_VIOLET = "#7b61e8"   # Deep Iris; readable as accent-on-dark and as a button bg with white text
+ACCENT_VIOLET = "#1b1a21"   # 2026-07-26: monochrome pass, was Deep Iris violet ("too gamified", Antonio) -- now near-black, readable as accent-on-dark and as a button bg with white text
 ACCENT_BLUE = "#118afb"
-ACCENT_GREEN = "#4fb980"    # muted green, reserved for the savings/success moment
+ACCENT_GREEN = "#6e6b7b"    # 2026-07-26: was a savings/success green, now neutral gray to match
 ACCENT_AMBER = "#eab308"
 
 # --- Theme-adaptive card palette (2026-07-22) --------------------------------
@@ -3383,7 +4245,8 @@ _CARD_DARK = {
 _CARD_LIGHT = {
     "POPUP_BG": "#ffffff", "POPUP_BORDER": "#eceaf2", "POPUP_CARD_BG": "#fbfafd",
     "POPUP_TEXT": "#1b1a21", "POPUP_SUBTEXT": "#6e6b7b", "POPUP_MUTED_BTN": "#f0eff4",
-    "ACCENT_VIOLET": "#5738c7", "ACCENT_GREEN": "#2c8a5a",
+    # 2026-07-26: monochrome pass, was violet/green ("purple's too gamified", Antonio) -- now black/gray
+    "ACCENT_VIOLET": "#1b1a21", "ACCENT_GREEN": "#6e6b7b",
 }
 
 
@@ -3403,28 +4266,35 @@ def _blend(fg, bg, t):
         return bg
 
 
-def _draw_header_gear(canvas, d, color):
-    """A small settings-gear glyph drawn directly on a live Tk Canvas (not a
-    baked PIL image, unlike the badge's own icon — this one lives in the
-    card header and needs to recolour on hover). Simple primitives only
-    (ellipses + thick radial lines), stays crisp at the tiny size a header
-    icon needs."""
+def _draw_header_settings_icon(canvas, d, color):
+    """The card header's settings icon: three horizontal sliders, each with
+    its own knob at a different position (2026-07-26, Antonio, direct: "this
+    is what the settings button should look like, rather than the make-shift
+    gear"). Drawn on a live Tk Canvas, not a baked PIL image, so it can
+    recolour on hover the same way the gear it replaces did."""
     canvas.delete("all")
-    cx = cy = d / 2
-    r = d * 0.30
-    teeth = 8
-    tooth_len = max(1, r * 0.55)
-    tooth_w = max(2, round(r * 0.5))
-    for i in range(teeth):
-        ang = 2 * math.pi * i / teeth
-        x0 = cx + math.cos(ang) * (r * 0.55)
-        y0 = cy + math.sin(ang) * (r * 0.55)
-        x1 = cx + math.cos(ang) * (r * 0.55 + tooth_len)
-        y1 = cy + math.sin(ang) * (r * 0.55 + tooth_len)
-        canvas.create_line(x0, y0, x1, y1, fill=color, width=tooth_w, capstyle="round")
-    canvas.create_oval(cx - r * 0.55, cy - r * 0.55, cx + r * 0.55, cy + r * 0.55, fill=color, outline="")
-    hole = r * 0.28
-    canvas.create_oval(cx - hole, cy - hole, cx + hole, cy + hole, fill=canvas["bg"], outline="")
+    margin = d * 0.16
+    x0, x1 = margin, d - margin
+    track_w = max(1, round(d * 0.06))
+    # Real bug caught by screenshotting the actual rendered header icon, not
+    # just the isolated PIL preview (Antonio: "the image isn't correct"): at
+    # this canvas's real size (~20px), a 0.115*d knob radius and 0.22*d row
+    # spacing put adjacent rows' knobs closer together than their own
+    # diameter, so they merged into one blob instead of three sliders. Row
+    # spacing must clear the knob's full diameter with margin to spare, and
+    # both need a hard pixel floor since fractions of ~20px round away to
+    # nothing reliable.
+    knob_r = max(1.6, d * 0.09)
+    rows_y = [d * 0.20, d * 0.50, d * 0.80]
+    # Knob position per row as a fraction along the track -- three different
+    # spots so it reads as "sliders set to different levels", not one glyph
+    # repeated three times.
+    fracs = [0.64, 0.30, 0.50]
+    rows = list(zip(rows_y, fracs))
+    for y, frac in rows:
+        canvas.create_line(x0, y, x1, y, fill=color, width=track_w, capstyle="round")
+        kx = x0 + (x1 - x0) * frac
+        canvas.create_oval(kx - knob_r, y - knob_r, kx + knob_r, y + knob_r, fill=color, outline="")
 
 
 def _apply_card_palette():
@@ -3449,13 +4319,13 @@ def _apply_card_palette():
 # accent like Grammarly's own correctness cards; conciseness rules (filler,
 # verbose, redundant) use the brand purple, since that's the token-saving
 # core of the product.
-CORRECTNESS_ACCENT = "#f2555a"
+CORRECTNESS_ACCENT = "#6e6b7b"  # 2026-07-26: monochrome pass -- category color-coding removed
 SUGGESTION_CATEGORY = {
     "spelling": ("Spelling", CORRECTNESS_ACCENT),
-    "grammar": ("Grammar", ACCENT_AMBER),
-    "filler": ("Wordiness", ACCENT_VIOLET),
-    "verbose": ("Wordiness", ACCENT_VIOLET),
-    "redundant": ("Redundancy", ACCENT_VIOLET),
+    "grammar": ("Grammar", CORRECTNESS_ACCENT),
+    "filler": ("Wordiness", CORRECTNESS_ACCENT),
+    "verbose": ("Wordiness", CORRECTNESS_ACCENT),
+    "redundant": ("Redundancy", CORRECTNESS_ACCENT),
 }
 
 
@@ -3520,17 +4390,35 @@ class SuggestionPopup:
         self._pool = None
         self._pool_theme_sig = None
         self._built_theme_sig = None
+        # Real ask 2026-07-26: a card shrunk for a small host window looked
+        # like the SAME card reflowed narrower (text unchanged -> more
+        # wrapping -> taller, not smaller) rather than a true miniature of
+        # the original. text_scale drives _fs() below so text shrinks along
+        # with the width. Recomputed in _new_window every open from the
+        # CURRENT POPUP_WIDTH (itself set per-tick by
+        # clamp_popup_width_to_host), so it always reflects the host window
+        # this exact open is for.
+        self.text_scale = 1.0
 
-    @staticmethod
-    def _current_theme_sig():
-        """(theme setting, resolved dark/light). Light-only now (real ask
-        2026-07-25, see _apply_card_palette) -- a constant signature, so
-        the pooling check in _new_window (self._pool_theme_sig == theme_sig)
-        always matches and the header is never rebuilt for a "theme
-        change" that can no longer happen. Kept as a real method rather
-        than inlined `("light", False)` at each of its two call sites, so
-        there's exactly one place to touch if that ever changes back."""
-        return ("light", False)
+    def _fs(self, pt):
+        """Scaled point size for card text -- see text_scale's comment in
+        __init__. Only ever shrinks (never inflates past the approved
+        design size), and floors at 0.65x so small-window text stays
+        legible rather than shrinking to nothing."""
+        return max(1, round(pt * self.text_scale))
+
+    def _current_theme_sig(self):
+        """(theme setting, resolved dark/light, text-scale bucket). Light-
+        only now (real ask 2026-07-25, see _apply_card_palette) -- theme is
+        a constant. The scale bucket was added 2026-07-26 alongside
+        text_scale above: pooling (self._pool_theme_sig == theme_sig in
+        _new_window) must fall through to a real rebuild whenever the
+        scale actually changes, since font size is baked into each Label/
+        Button at construction and a reused pooled window can't pick up a
+        new scale on its own. Bucketed to the nearest 0.05 so ordinary
+        window-resize jitter doesn't force a rebuild on every single tick,
+        only a real size-class change does."""
+        return ("light", False, round(self.text_scale, 2))
 
     def dismiss(self):
         if self.window is not None:
@@ -3618,6 +4506,8 @@ class SuggestionPopup:
         inner body frame to pack content into. The header keeps the brand
         present in every state, same as Grammarly's own card always showing
         its mark."""
+        design_width = S(DESIGN_POPUP_WIDTH)
+        self.text_scale = max(0.65, min(1.0, POPUP_WIDTH / design_width)) if design_width else 1.0
         self.dismiss()
         # Prefer the badge's live position over whatever coordinates the
         # caller captured earlier, those go stale the moment the badge is
@@ -3668,6 +4558,10 @@ class SuggestionPopup:
             self._photos = []
 
         win = tk.Toplevel(self.root)
+        # REVERTED 2026-07-26: same regression as the badge window's
+        # identical change (see its comment) -- .transient(self.root)
+        # against the hidden, withdrawn main root stopped this window from
+        # showing at all. Reverted.
         # Built hidden, then shown in _finalize. make_window_non_activating
         # has to realize the window to work at all (see its docstring), and
         # doing that while visible would flash an empty card at the wrong
@@ -3677,6 +4571,24 @@ class SuggestionPopup:
         win.attributes("-topmost", True)
         win.configure(bg=POPUP_BORDER)  # acts as a 1px border via padding below
         make_window_non_activating(win)
+        # Same belt-and-suspenders fix as the badge window (2026-07-26): if a
+        # taskbar entry appears despite WS_EX_TOOLWINDOW, it must never show
+        # the default Tk/Tcl feather icon instead of the real logo.
+        taskbar_icon = _load_app_icon_image(32)
+        if taskbar_icon is not None:
+            self._taskbar_icon_photo = ImageTk.PhotoImage(taskbar_icon)
+            try:
+                win.iconphoto(True, self._taskbar_icon_photo)
+            except Exception:
+                pass
+        # Same tooltip-text fix as the badge window (2026-07-26): a
+        # Toplevel's title defaults to the literal "tk" until set, and the
+        # taskbar/Alt-Tab tooltip reads that regardless of overrideredirect
+        # hiding the title bar itself.
+        try:
+            win.title(BRAND_NAME)
+        except Exception:
+            pass
 
         # Inner white card, inset 1px so POPUP_BORDER shows as a hairline frame.
         card = tk.Frame(win, bg=POPUP_BG)
@@ -3686,20 +4598,25 @@ class SuggestionPopup:
         # the right, matching Antonio's 2026-07-21 mockup.
         header = tk.Frame(card, bg=POPUP_BG)
         header.pack(fill="x", padx=S(18), pady=(S(14), S(12)))
-        # Theme-adaptive mark (2026-07-23): logo.png is the HOLLOW mark (white
-        # interior + white "C/"), which reads fine on the dark card but goes
-        # near-invisible on the light card (hollow rim, ghost "C/"). Use the
-        # dark-FILLED mark (badge.png) on the light theme so the "C/" is legible.
-        logo = _load_logo_image(26) if dark else _load_badge_mark_image(26)
+        # REVERTED 2026-07-26: the plain-text "C/" tried here looked
+        # "extremely wrong compared to the settings" once actually seen
+        # live. The filled-circle badge mark tried right after THAT still
+        # wasn't actually right either -- Settings' own header doesn't use
+        # that circular mark at all, it uses mark_dark.png, the bare glyph
+        # with no shape behind it (see _load_mark_dark_image). Using that
+        # same asset here is what actually makes the two surfaces match,
+        # not just superficially resemble each other.
+        # "Comprsly" wordmark REMOVED (real ask 2026-07-26, Antonio, direct:
+        # "remove the word... increase the size of the icon instead") --
+        # the mark carries the header alone now, bigger than it was
+        # (26 -> 36) to fill the space the wordmark left.
+        logo = _load_mark_dark_image(36)
         if logo is not None:
             photo = ImageTk.PhotoImage(logo)
             self._photos.append(photo)
             tk.Label(header, image=photo, bg=POPUP_BG).pack(side="left")
-        tk.Label(
-            header, text=BRAND_NAME, font=("Segoe UI Semibold", 13), fg=POPUP_TEXT, bg=POPUP_BG,
-        ).pack(side="left", padx=(S(10), S(0)))
         close = tk.Label(
-            header, text="✕", font=("Segoe UI", 11), fg=POPUP_SUBTEXT, bg=POPUP_BG,
+            header, text="✕", font=("Segoe UI", self._fs(11)), fg=POPUP_SUBTEXT, bg=POPUP_BG,
             cursor="hand2",
         )
         close.pack(side="right")
@@ -3711,13 +4628,13 @@ class SuggestionPopup:
         gear = tk.Canvas(header, width=gear_d, height=gear_d, bg=POPUP_BG,
                          highlightthickness=0, bd=0, cursor="hand2")
         gear.pack(side="right", padx=(0, S(10)))
-        _draw_header_gear(gear, gear_d, POPUP_SUBTEXT)
+        _draw_header_settings_icon(gear, gear_d, POPUP_SUBTEXT)
 
         def _gear_enter(_e):
-            _draw_header_gear(gear, gear_d, ACCENT_VIOLET)
+            _draw_header_settings_icon(gear, gear_d, ACCENT_VIOLET)
 
         def _gear_leave(_e):
-            _draw_header_gear(gear, gear_d, POPUP_SUBTEXT)
+            _draw_header_settings_icon(gear, gear_d, POPUP_SUBTEXT)
 
         gear.bind("<Enter>", _gear_enter)
         gear.bind("<Leave>", _gear_leave)
@@ -3726,12 +4643,11 @@ class SuggestionPopup:
         # "get rid of the system and dark, only keep light" -- see
         # _apply_card_palette). Used to be a System->Light->Dark->System
         # cycling icon right here; nothing left to cycle to now.
-        # Green "On your device" pill, matching the web mockup header. Tk can't
-        # round it, but a green-tinted chip reads the same at this size.
-        tk.Label(
-            header, text="🔒 On your device", font=("Segoe UI", 8), fg=ACCENT_GREEN,
-            bg=_blend(ACCENT_GREEN, POPUP_BG, 0.15), padx=S(8), pady=S(3),
-        ).pack(side="right", padx=(0, S(12)))
+        # Header "On your device" pill REMOVED (real ask 2026-07-26, Antonio,
+        # direct: "Remove this from the badge pop-up UI"). The fuller privacy
+        # line in _footer_bar ("100% on your device — nothing you type leaves
+        # it") stays -- that's the one disclosure kept, not this shorthand
+        # duplicate.
         tk.Frame(card, bg=POPUP_BORDER, height=S(1)).pack(fill="x")
 
         body = tk.Frame(card, bg=POPUP_BG)
@@ -3870,7 +4786,7 @@ class SuggestionPopup:
 
     def _primary_button(self, parent, text, command):
         return tk.Button(
-            parent, text=text, font=("Segoe UI Semibold", 9), fg="white", bg=ACCENT_VIOLET,
+            parent, text=text, font=("Segoe UI Semibold", self._fs(9)), fg="white", bg=ACCENT_VIOLET,
             activebackground=ACCENT_VIOLET, activeforeground="white", relief="flat",
             padx=S(18), pady=S(7), command=command, takefocus=0, cursor="hand2",
             borderwidth=0,
@@ -3902,7 +4818,7 @@ class SuggestionPopup:
 
     def _muted_button(self, parent, text, command):
         return tk.Button(
-            parent, text=text, font=("Segoe UI", 9), fg=POPUP_TEXT, bg=POPUP_MUTED_BTN,
+            parent, text=text, font=("Segoe UI", self._fs(9)), fg=POPUP_TEXT, bg=POPUP_MUTED_BTN,
             activebackground=POPUP_MUTED_BTN, activeforeground=POPUP_TEXT, relief="flat",
             padx=S(16), pady=S(7), command=command, takefocus=0, cursor="hand2", borderwidth=0,
         )
@@ -3911,7 +4827,7 @@ class SuggestionPopup:
         """Transparent text button (the mockup's 'Dismiss'): no fill, muted
         text, so it reads as secondary next to the filled primary."""
         return tk.Button(
-            parent, text=text, font=("Segoe UI", 9), fg=POPUP_SUBTEXT, bg=POPUP_BG,
+            parent, text=text, font=("Segoe UI", self._fs(9)), fg=POPUP_SUBTEXT, bg=POPUP_BG,
             activebackground=POPUP_BG, activeforeground=POPUP_TEXT, relief="flat",
             padx=S(14), pady=S(7), command=command, takefocus=0, cursor="hand2", borderwidth=0,
         )
@@ -3938,15 +4854,15 @@ class SuggestionPopup:
         badge.create_oval(S(1), S(1), D - S(1), D - S(1),
                           fill=_blend(glyph_fg, POPUP_BG, 0.16), outline="")
         badge.create_text(D / 2, D / 2, text=num, fill=glyph_fg,
-                          font=("Segoe UI Semibold", S(11)))
+                          font=("Segoe UI Semibold", self._fs(11)))
         titles = tk.Frame(row, bg=POPUP_BG)
         titles.pack(side="left", padx=(S(10), S(0)), fill="x", expand=True)
         tk.Label(
-            titles, text=title, font=("Segoe UI Semibold", 11), fg=POPUP_TEXT, bg=POPUP_BG,
+            titles, text=title, font=("Segoe UI Semibold", self._fs(11)), fg=POPUP_TEXT, bg=POPUP_BG,
             anchor="w",
         ).pack(anchor="w")
         sub = tk.Label(
-            titles, text=subtitle, font=("Segoe UI", 9), fg=POPUP_SUBTEXT, bg=POPUP_BG,
+            titles, text=subtitle, font=("Segoe UI", self._fs(9)), fg=POPUP_SUBTEXT, bg=POPUP_BG,
             # Reserve enough for the WIDEST button that can sit in the action
             # slot, so the subtitle never runs under it. Tk labels don't clip,
             # so an over-wide wraplength only shows up in a render.
@@ -3965,13 +4881,13 @@ class SuggestionPopup:
         # Single green privacy line, matching the web mockup's footer.
         tk.Label(
             bar, text="🔒  100% on your device — nothing you type leaves it",
-            font=("Segoe UI", 8), fg=ACCENT_GREEN, bg=POPUP_BG,
+            font=("Segoe UI", self._fs(8)), fg=ACCENT_GREEN, bg=POPUP_BG,
         ).pack(side="left")
 
     def show_loading(self, x, y, message="Compressing your prompt with the local AI, this takes a few seconds..."):
         win = self._new_window(x, y)
         tk.Label(
-            self._body, text=message, font=("Segoe UI", 9), fg=POPUP_TEXT, bg=POPUP_BG,
+            self._body, text=message, font=("Segoe UI", self._fs(9)), fg=POPUP_TEXT, bg=POPUP_BG,
             padx=S(16), pady=S(14), wraplength=POPUP_WIDTH - S(40), justify="left", anchor="w",
         ).pack(fill="x")
         self._finalize(win, x, y)
@@ -3993,7 +4909,7 @@ class SuggestionPopup:
     def show_error(self, x, y, message):
         win = self._new_window(x, y)
         tk.Label(
-            self._body, text=message, font=("Segoe UI", 9), bg=POPUP_BG, fg=CORRECTNESS_ACCENT,
+            self._body, text=message, font=("Segoe UI", self._fs(9)), bg=POPUP_BG, fg=CORRECTNESS_ACCENT,
             padx=S(16), pady=S(12), wraplength=POPUP_WIDTH - S(40), justify="left", anchor="w",
         ).pack(fill="x")
         footer = tk.Frame(self._body, bg=POPUP_BG)
@@ -4250,7 +5166,7 @@ class SuggestionPopup:
             else:
                 msg = "No spelling, grammar or punctuation issues found. Looks clean."
             tk.Label(
-                body, text=msg, font=("Segoe UI", 10), fg=POPUP_SUBTEXT, bg=POPUP_BG,
+                body, text=msg, font=("Segoe UI", self._fs(10)), fg=POPUP_SUBTEXT, bg=POPUP_BG,
                 padx=S(18), pady=S(16), wraplength=POPUP_WIDTH - S(40),
                 justify="left", anchor="w",
             ).pack(fill="x")
@@ -4277,7 +5193,7 @@ class SuggestionPopup:
             # actually want.
             tk.Label(
                 step1, text="✓  No grammar or spelling issues found",
-                font=("Segoe UI Semibold", 9), fg="#2e9e5b", bg=POPUP_BG, anchor="w",
+                font=("Segoe UI Semibold", self._fs(9)), fg="#2e9e5b", bg=POPUP_BG, anchor="w",
             ).pack(fill="x", padx=S(18), pady=(S(14), S(0)))
         else:
             # Buttons go BELOW the fixes list (see after the list), matching the
@@ -4338,12 +5254,12 @@ class SuggestionPopup:
         )
         if not enough_text:
             tk.Label(
-                action, text="nothing to compress", font=("Segoe UI", 8),
+                action, text="nothing to compress", font=("Segoe UI", self._fs(8)),
                 fg=POPUP_SUBTEXT, bg=POPUP_BG,
             ).pack()
         elif waiting_on_step1:
             tk.Label(
-                action, text="after Step 1", font=("Segoe UI", 8),
+                action, text="after Step 1", font=("Segoe UI", self._fs(8)),
                 fg=POPUP_SUBTEXT, bg=POPUP_BG,
             ).pack()
         else:
@@ -4443,7 +5359,7 @@ class SuggestionPopup:
             receipt = tk.Label(
                 self._body,
                 text=f"✓  Step 1 done · {fixed_count} issue{'s' if fixed_count != 1 else ''} fixed",
-                font=("Segoe UI Semibold", 9), fg="#2e9e5b", bg=POPUP_BG, anchor="w",
+                font=("Segoe UI Semibold", self._fs(9)), fg="#2e9e5b", bg=POPUP_BG, anchor="w",
             )
             # `before` is what actually puts the receipt where step one was.
             # Packed without it, the receipt would land underneath step two.
@@ -4470,7 +5386,7 @@ class SuggestionPopup:
                         side="right", padx=(S(0), S(8)))
                 else:
                     tk.Label(
-                        footer, text="nothing to compress", font=("Segoe UI", 8),
+                        footer, text="nothing to compress", font=("Segoe UI", self._fs(8)),
                         fg=POPUP_SUBTEXT, bg=POPUP_BG,
                     ).pack(side="right", padx=(S(0), S(8)))
 
@@ -4535,7 +5451,7 @@ class SuggestionPopup:
         _redraw()
 
         # Category label, muted, on the right (like the mockup).
-        tk.Label(card, text=cat_name.lower(), font=("Segoe UI", 8), fg=POPUP_SUBTEXT,
+        tk.Label(card, text=cat_name.lower(), font=("Segoe UI", self._fs(8)), fg=POPUP_SUBTEXT,
                  bg=POPUP_CARD_BG).pack(side="right", padx=(S(6), S(12)))
 
         # The change: struck-through old → bold new, on one line.
@@ -4544,12 +5460,12 @@ class SuggestionPopup:
             return txt if len(txt) <= limit else txt[: limit - 1] + "…"
         row = tk.Frame(card, bg=POPUP_CARD_BG)
         row.pack(side="left", fill="x", expand=True, padx=(S(2), S(6)), pady=S(9))
-        tk.Label(row, text=_clip(s["original"]), font=("Segoe UI", 10, "overstrike"),
+        tk.Label(row, text=_clip(s["original"]), font=("Segoe UI", self._fs(10), "overstrike"),
                  fg=POPUP_SUBTEXT, bg=POPUP_CARD_BG).pack(side="left")
-        tk.Label(row, text="→", font=("Segoe UI", 10), fg=POPUP_SUBTEXT,
+        tk.Label(row, text="→", font=("Segoe UI", self._fs(10)), fg=POPUP_SUBTEXT,
                  bg=POPUP_CARD_BG).pack(side="left", padx=S(6))
         new = _clip(s["replacement"]) if s["replacement"].strip() else "removed"
-        tk.Label(row, text=new, font=("Segoe UI Semibold", 10), fg=POPUP_TEXT,
+        tk.Label(row, text=new, font=("Segoe UI Semibold", self._fs(10)), fg=POPUP_TEXT,
                  bg=POPUP_CARD_BG).pack(side="left")
 
     def show_compress_offer(self, x, y, on_compress, enough_text=True):
@@ -4565,16 +5481,16 @@ class SuggestionPopup:
         title_row = tk.Frame(body, bg=POPUP_BG)
         title_row.pack(fill="x", padx=S(16), pady=(S(12), S(4)))
         tk.Label(
-            title_row, text="✓", font=("Segoe UI", 11, "bold"), fg="#2e9e5b", bg=POPUP_BG,
+            title_row, text="✓", font=("Segoe UI", self._fs(11), "bold"), fg="#2e9e5b", bg=POPUP_BG,
         ).pack(side="left")
         tk.Label(
-            title_row, text="Spelling & grammar fixed", font=("Segoe UI Semibold", 11),
+            title_row, text="Spelling & grammar fixed", font=("Segoe UI Semibold", self._fs(11)),
             fg=POPUP_TEXT, bg=POPUP_BG,
         ).pack(side="left", padx=(S(6), S(0)))
 
         tk.Label(
             body, text="Now shorten the whole prompt with the local AI, then review it before applying.",
-            font=("Segoe UI", 9), bg=POPUP_BG, fg=POPUP_SUBTEXT, anchor="w",
+            font=("Segoe UI", self._fs(9)), bg=POPUP_BG, fg=POPUP_SUBTEXT, anchor="w",
             wraplength=POPUP_WIDTH - S(32), justify="left",
         ).pack(fill="x", padx=S(16), pady=(S(0), S(12)))
 
@@ -4585,7 +5501,7 @@ class SuggestionPopup:
             self._primary_button(footer, "Compress with AI", on_compress).pack(side="right", padx=(S(0), S(8)))
         else:
             tk.Label(
-                footer, text="nothing to compress", font=("Segoe UI", 8),
+                footer, text="nothing to compress", font=("Segoe UI", self._fs(8)),
                 fg=POPUP_SUBTEXT, bg=POPUP_BG,
             ).pack(side="right", padx=(S(0), S(8)))
         self._finalize(win, x, y)
@@ -4626,7 +5542,7 @@ class SuggestionPopup:
             # Green is our reserved "savings" colour (matches the mockup),
             # not the violet accent.
             tk.Label(
-                action, text=f"↓ {saved} tokens · {pct}% shorter", font=("Segoe UI Semibold", 9),
+                action, text=f"↓ {saved} tokens · {pct}% shorter", font=("Segoe UI Semibold", self._fs(9)),
                 fg=ACCENT_GREEN, bg=POPUP_BG,
             ).pack()
 
@@ -4640,11 +5556,11 @@ class SuggestionPopup:
             col = tk.Frame(parent, bg=POPUP_CARD_BG, width=half)
             col.pack(side=side, fill="both", expand=True, padx=S(12), pady=S(10))
             tk.Label(
-                col, text=heading, font=("Segoe UI Semibold", 9), fg=POPUP_TEXT,
+                col, text=heading, font=("Segoe UI Semibold", self._fs(9)), fg=POPUP_TEXT,
                 bg=POPUP_CARD_BG, anchor="w",
             ).pack(fill="x")
             tk.Label(
-                col, text=f"{words} words • {tokens} tokens", font=("Segoe UI", 8),
+                col, text=f"{words} words • {tokens} tokens", font=("Segoe UI", self._fs(8)),
                 fg=POPUP_SUBTEXT, bg=POPUP_CARD_BG, anchor="w",
             ).pack(fill="x", pady=(S(1), S(6)))
 
@@ -4662,7 +5578,7 @@ class SuggestionPopup:
             holder = tk.Frame(col, bg=POPUP_CARD_BG)
             holder.pack(fill="x")
 
-            probe = tk.Label(holder, text=content, font=("Segoe UI", 9), fg=POPUP_TEXT,
+            probe = tk.Label(holder, text=content, font=("Segoe UI", self._fs(9)), fg=POPUP_TEXT,
                              bg=POPUP_CARD_BG, anchor="nw", justify="left", wraplength=wrap_w)
             probe.pack()
             probe.update_idletasks()
@@ -4671,7 +5587,7 @@ class SuggestionPopup:
 
             if natural_h <= CAP_H:
                 tk.Label(
-                    holder, text=content, font=("Segoe UI", 9), fg=POPUP_TEXT, bg=POPUP_CARD_BG,
+                    holder, text=content, font=("Segoe UI", self._fs(9)), fg=POPUP_TEXT, bg=POPUP_CARD_BG,
                     anchor="nw", justify="left", wraplength=half - S(24),
                 ).pack(fill="x")
                 return
@@ -4714,7 +5630,7 @@ class SuggestionPopup:
             inner = tk.Frame(canvas, bg=POPUP_CARD_BG)
             cw = canvas.create_window((0, 0), window=inner, anchor="nw")
             tk.Label(
-                inner, text=content, font=("Segoe UI", 9), fg=POPUP_TEXT, bg=POPUP_CARD_BG,
+                inner, text=content, font=("Segoe UI", self._fs(9)), fg=POPUP_TEXT, bg=POPUP_CARD_BG,
                 anchor="nw", justify="left", wraplength=wrap_w,
             ).pack(fill="x")
             inner.bind("<Configure>", lambda _e: (
@@ -5644,6 +6560,23 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
 
             llm_hwnd, process_name = get_foreground_window_and_process()
 
+            # Real ask 2026-07-26 (Antonio, direct: his live-transcription
+            # dictation app's own floating overlay visually collides with
+            # the badge, which should only ever sit at the real LLM chat
+            # box -- "make sure it stays in one area, doesn't move
+            # anywhere else"). handy.exe was never actually logged as a
+            # recognized app anywhere in debug.log (checked directly), so
+            # this isn't the allowlist letting it through -- it's an
+            # explicit, zero-risk exclusion regardless of exactly which
+            # path might otherwise surface it, same shape as
+            # BROWSER_PROCESS_NAMES/KNOWN_LLM_PROCESSES above but for the
+            # opposite purpose: never treat this process as a focus
+            # candidate at all, this early, before anything downstream
+            # gets a chance to.
+            EXCLUDED_OVERLAY_PROCESSES = {"handy.exe"}
+            if process_name in EXCLUDED_OVERLAY_PROCESSES:
+                llm_hwnd, process_name = None, None
+
             # Real ask 2026-07-25: badge too big on any monitor that isn't
             # the laptop panel (see badge_scale_for_dpi). This machinery
             # (apply_scale_for_window, _scale_listeners) already existed
@@ -5658,6 +6591,21 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # the real foreground window handle on hand.
             if llm_hwnd:
                 apply_scale_for_window(llm_hwnd)
+                # REVERTED 2026-07-26: shipped live, caused a real regression
+                # Antonio caught immediately -- several of the card's
+                # wraplength values are "POPUP_WIDTH minus a FIXED pixel
+                # count" (room reserved for a button/badge), tuned for the
+                # unshrunk 560px card. Shrinking POPUP_WIDTH without also
+                # scaling those fixed subtractions collapsed the remaining
+                # wrap width to near-nothing, wrapping text one word per
+                # line. text_scale/_fs() (SuggestionPopup) has the same
+                # problem in reverse -- it scales font size but nothing
+                # reads it back into those fixed subtractions either. Do
+                # not re-enable until every "POPUP_WIDTH - <fixed number>"
+                # site in SuggestionPopup is audited and fixed to scale
+                # proportionally too, and it's been verified with a REAL
+                # screenshot of the built card, not just debug.log numbers.
+                # clamp_popup_width_to_host(llm_hwnd)
 
             # Our own web windows (review card / settings / onboarding) run as
             # separate processes that share this exe's name. When one of them
@@ -5704,7 +6652,45 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # Measured: Chrome, Edge and native Windows apps all expose the
             # field's real text this way. Known LLM apps (Claude's Electron
             # build exposes nothing) still get the keystroke fallback.
+            # Terminal input-line extraction (2026-07-26) now happens
+            # INSIDE get_focused_text() itself, not here -- see its
+            # docstring for why: Apply independently calls that same
+            # function fresh to capture expected_old_text, and patching
+            # only this one call site left Apply still reading the
+            # terminal's whole unfiltered buffer. Confirmed working via a
+            # since-removed codepoint diagnostic (found the real prompt
+            # marker is "❯ ", not the originally-guessed ASCII "> ").
             text, control = get_focused_text()
+
+            # Real ask 2026-07-26 (Antonio, direct repro: renaming a chat in
+            # Claude Code's sidebar showed the badge there too -- "make sure
+            # it stays in one area... the chat box... consistently").
+            # get_focused_text() above returns whatever control has focus
+            # ANYWHERE in the app's window, with no idea whether that's the
+            # real composer or some other editable field (a rename box, a
+            # search/filter input) -- app_label only identifies WHICH app,
+            # never WHICH control within it. Claude's real composer
+            # consistently shows a CSS class containing "ProseMirror" in
+            # this exact watch loop's own "badge rect source" diagnostic
+            # (checked directly against debug.log); nothing else observed
+            # in this app's window has ever carried that class. Checking
+            # ClassName, not Name, for the same privacy reason that
+            # diagnostic already avoids Name (some apps mirror the typed
+            # value into Name -- see its own comment).
+            if app_label == "Claude" and control is not None:
+                try:
+                    is_real_composer = "ProseMirror" in (control.ClassName or "")
+                except Exception:
+                    # FLIPPED to fail-closed (real leak caught live: a
+                    # TreeItemControl -- a sidebar row -- got a badge rect
+                    # anyway, right after this check first shipped). The
+                    # real composer's ClassName read has never once failed
+                    # anywhere in this session's logs, so a read failure
+                    # here is itself evidence this ISN'T the composer, not
+                    # an ambiguous case to guess generously on.
+                    is_real_composer = False
+                if not is_real_composer:
+                    text, control = None, None
 
             # Real bug found 2026-07-20: right after switching into Claude,
             # UIA's "focused" element can briefly be some internal
@@ -5933,6 +6919,27 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     or raw_rect.bottom - raw_rect.top <= 0):
                 raw_rect = None
 
+            # Real ask 2026-07-26 (Antonio, screenshot of the actual
+            # bordered input box): "why don't we just have it sit in the
+            # box... sticks to the edge of the box". Windows Terminal DOES
+            # expose a real accessible control ("TermControl"), confirmed
+            # live -- but its bounding rect covers the WHOLE terminal pane,
+            # not just the small bordered input area the CLI draws at the
+            # bottom (that box is drawn by the CLI itself inside the same
+            # character grid, not a separate UIA element). That's why the
+            # badge was landing vertically centred in the entire pane
+            # instead of on the input line. Approximated instead: a thin
+            # slice off the BOTTOM of the pane's own rect, sized to
+            # roughly the bordered box's visual height. From here on this
+            # flows through the exact same "real box" path every other
+            # recognized app already uses (dock at ITS right edge,
+            # vertically centred within IT) -- not a separate mechanism.
+            if raw_rect is not None and process_name in TERMINAL_HOST_PROCESSES:
+                raw_rect = _SimpleRect(
+                    raw_rect.left, raw_rect.bottom - TERMINAL_INPUT_BOX_HEIGHT_GUESS,
+                    raw_rect.right, raw_rect.bottom,
+                )
+
             # Real bug found live 2026-07-25 (Antonio, screenshot: badge
             # floating in an odd spot -- "everywhere else is fine but on
             # the edge like this it is not good" -- on Claude's own
@@ -6107,18 +7114,79 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                 # split-screen correctness via _host_window_rect) -- never
                 # for the actual badge coordinates.
                 ref = get_caret_screen_rect() or get_last_click_rect()
-                host = None
-                if ref is not None:
-                    host = _host_window_rect(ref.left, ref.top)
-                if host is None:
+                # Real report 2026-07-26 (Antonio, live: badge landing
+                # "above it... on the far right of the screen" once the new
+                # terminal/AI-CLI recognition made a terminal window reach
+                # this same "no accessible control" branch): the
+                # window-relative bottom-right guess below was built and
+                # tuned specifically for Claude/ChatGPT/Gemini's chat
+                # composers, which really do always sit near the bottom of
+                # their window -- true for a GUI chat app, NOT true for a
+                # terminal, where the live cursor can be anywhere the
+                # scrolling output currently ends. A terminal has no
+                # "composer position" convention to guess at, so this
+                # branches off to use the REAL caret position directly
+                # instead, the opposite of why the guess replaced
+                # caret-chasing for Claude below -- different apps,
+                # different right answer.
+                is_terminal_case = process_name in TERMINAL_HOST_PROCESSES
+                rect = None  # guaranteed default; every branch below either
+                             # overrides this with something better or
+                             # leaves it None, so nothing downstream can
+                             # ever see an unbound `rect` (real terminal
+                             # case with no caret AND no last-click point
+                             # available falls through to this default,
+                             # then the auto.GetForegroundControl() safety
+                             # net further below).
+                if is_terminal_case:
+                    # REVERTED the caret-based approach tried just above
+                    # (2026-07-26): live screenshots showed the badge
+                    # floating in the middle of the scrollback, nowhere
+                    # near the real input line. Windows Terminal is
+                    # GPU-composited and evidently doesn't expose an
+                    # accurate classic Win32 caret matching where its own
+                    # TUI actually draws its cursor -- get_caret_screen_rect
+                    # itself already warns this can happen ("common for
+                    # GPU-composited apps that draw their own cursor
+                    # instead of using the classic Win32 caret API").
+                    # Chasing it isn't reliable here.
+                    #
+                    # Anchored to the WINDOW's bottom edge instead -- same
+                    # idea as the Claude-composer heuristic below, but
+                    # tuned from Antonio's own screenshots to a DIFFERENT
+                    # target: underneath the input line, to the right of
+                    # the "auto mode on (shift+tab to cycle)" status text,
+                    # not the composer-style bottom-right corner.
+                    # FIRST-PASS ESTIMATE, not measured against a real
+                    # rendered layout -- flagged as likely needing one more
+                    # round of adjustment once actually seen live.
                     try:
                         hwnd = ctypes.windll.user32.GetForegroundWindow()
                         win_rect = wintypes.RECT()
                         if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(win_rect)):
                             host = (win_rect.left, win_rect.top, win_rect.right, win_rect.bottom)
+                        else:
+                            host = None
                     except Exception:
                         host = None
-                if host is not None:
+                    if host is not None:
+                        left = host[0] + TERMINAL_STATUS_LEFT_OFFSET
+                        top = host[3] - TERMINAL_STATUS_BOTTOM_OFFSET
+                        rect = _SimpleRect(left, top, left + 1, top + 1)
+                    host = None  # already positioned; skip the composer heuristic below
+                else:
+                    host = None
+                    if ref is not None:
+                        host = _host_window_rect(ref.left, ref.top)
+                    if host is None:
+                        try:
+                            hwnd = ctypes.windll.user32.GetForegroundWindow()
+                            win_rect = wintypes.RECT()
+                            if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(win_rect)):
+                                host = (win_rect.left, win_rect.top, win_rect.right, win_rect.bottom)
+                        except Exception:
+                            host = None
+                if not is_terminal_case and host is not None:
                     # Real bug found live 2026-07-25 (second report, same
                     # screenshot symptom): TWO separate mistakes, not one.
                     #
@@ -6162,8 +7230,10 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     left = bx_target + BADGE_ICON_SIZE + BADGE_INSIDE_INSET
                     top = by_target + 4
                     rect = _SimpleRect(left, top, left + 1, top + 1)
-                else:
+                elif not is_terminal_case:
                     rect = None
+                # else: is_terminal_case was True and already set `rect`
+                # from the real caret above -- nothing left to do here.
                 if rect is None:
                     try:
                         fg = auto.GetForegroundControl()
@@ -6193,7 +7263,22 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                 # already-open card by the same delta (not a full
                 # re-_finalize, which would lose its docked-corner offset).
                 DRAG_THRESHOLD = S(60)
+                # Real follow-up bug caught live (Antonio: dragged to the
+                # other monitor, THEN maximized there -- card ended up close
+                # but not hooked to the badge's edge). A plain dx,dy shift
+                # (below) only stays correct if the box PURELY translates --
+                # it measures the left edge's movement alone, so a resize
+                # (maximize/restore) that changes the box's WIDTH moves the
+                # right edge (where the badge actually docks) by a different
+                # amount than dx captures, throwing the corner off by
+                # whatever the width changed by. A full _finalize() is
+                # unaffected by that since it re-derives everything from the
+                # box's CURRENT rect rather than an assumed-still-valid
+                # offset, so use it whenever the box's SIZE changed, not
+                # just its position.
+                RESIZE_THRESHOLD = S(60)
                 moved_far = False
+                resized = False
                 if rect is not None:
                     if card_open_anchor_rect is None:
                         card_open_anchor_rect = rect
@@ -6201,7 +7286,20 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                         dx = rect.left - card_open_anchor_rect.left
                         dy = rect.top - card_open_anchor_rect.top
                         moved_far = abs(dx) > DRAG_THRESHOLD or abs(dy) > DRAG_THRESHOLD
-                if moved_far:
+                        dw = (rect.right - rect.left) - (card_open_anchor_rect.right - card_open_anchor_rect.left)
+                        dh = (rect.bottom - rect.top) - (card_open_anchor_rect.bottom - card_open_anchor_rect.top)
+                        resized = abs(dw) > RESIZE_THRESHOLD or abs(dh) > RESIZE_THRESHOLD
+                if resized:
+                    def _resnap(rect=rect, count=suggestion_count, checked=is_long_enough):
+                        badge.show_near(rect, count, checked=checked)
+                        if popup.window is not None:
+                            try:
+                                popup._finalize(popup.window, *popup._pos)
+                            except Exception:
+                                log_exception("card reposition on host resize")
+                    badge.root.after(0, _resnap)
+                    card_open_anchor_rect = rect
+                elif moved_far:
                     def _follow_drag(dx=dx, dy=dy, rect=rect, count=suggestion_count,
                                       checked=is_long_enough):
                         badge.show_near(rect, count, checked=checked)
@@ -6814,6 +7912,16 @@ def show_ai_onboarding(root, settings_window):
         win.configure(bg=POPUP_BG)
         win.resizable(False, False)
         win.attributes("-topmost", True)
+        # This is a real dialog (has its own taskbar entry by design, unlike
+        # the badge/card), so it must never show the default Tk/Tcl feather
+        # in its title bar or taskbar button either (2026-07-26).
+        onboarding_icon = _load_app_icon_image(32)
+        if onboarding_icon is not None:
+            win._icon_keepalive = ImageTk.PhotoImage(onboarding_icon)
+            try:
+                win.iconphoto(True, win._icon_keepalive)
+            except Exception:
+                pass
 
         tk.Label(win, text=f"Welcome to {BRAND_NAME}", font=("Segoe UI Semibold", 14),
                  fg=POPUP_TEXT, bg=POPUP_BG).pack(anchor="w", padx=S(22), pady=(S(20), S(4)))
@@ -6904,6 +8012,7 @@ def main():
     # folder move (real ask 2026-07-22), a no-op once healed or if the user
     # never enabled login-launch.
     heal_launch_on_login()
+    remove_stale_compresly_startup_entry()
 
     # Cross-process model state (audit 2026-07-25): only THIS process may
     # write the loaded-state file Settings reads, and a progress file left
@@ -6924,15 +8033,23 @@ def main():
     # 96/72 is what Tk resolves to on Antonio's machine today, so at
     # UI_SCALE 1.0 this is a no-op and the app looks exactly as it does now.
     def _apply_font_scaling():
+        # _active_dpi[0] is set by apply_scale_for_window before this runs
+        # via _scale_listeners; only the very first, pre-window call at
+        # startup (right below) can still find it None, so fall back to the
+        # primary monitor's own DPI the same way BADGE_ICON_SIZE's module-
+        # level init does.
+        dpi = _active_dpi[0] if _active_dpi[0] is not None else _monitor_dpi()
         try:
-            root.tk.call("tk", "scaling", (96.0 / 72.0) * UI_SCALE * FONT_SCALE)
+            root.tk.call("tk", "scaling", (96.0 / 72.0) * UI_SCALE * font_scale_for_dpi(dpi))
         except Exception:
             pass
 
     _apply_font_scaling()
     _scale_listeners.append(_apply_font_scaling)
+    _startup_dpi = _active_dpi[0] if _active_dpi[0] is not None else _monitor_dpi()
     log(f"startup scale {UI_SCALE:.2f}: card {POPUP_WIDTH}px, badge {BADGE_ICON_SIZE}px, "
-        f"text {9 * (96.0/72.0) * UI_SCALE * FONT_SCALE:.0f}px")
+        f"text {9 * (96.0/72.0) * UI_SCALE * font_scale_for_dpi(_startup_dpi):.0f}px "
+        f"(font profile: {'laptop' if _startup_dpi >= 120 else 'monitor'})")
 
     popup = SuggestionPopup(root)
     badge = PersistentBadge(root)
@@ -6942,6 +8059,39 @@ def main():
     # The badge image is baked at BADGE_ICON_SIZE, so a screen change has to
     # rebuild it rather than resize it.
     _scale_listeners.append(lambda: root.after(0, badge.rebuild_for_scale))
+
+    # Real ask 2026-07-26 (Antonio, direct repro: dragged the host app
+    # window from one monitor to the other while the review card was
+    # already open -- the card never moved or resized for the new screen,
+    # "it did not auto-adjust correctly"). _finalize only ever ran once,
+    # at the moment a card first opened; nothing re-ran it on a later
+    # monitor change while it stayed open. Same listener mechanism the
+    # badge's own rebuild_for_scale already uses just above, not a new
+    # polling path -- _scale_listeners already fires exactly once per
+    # genuine monitor change, via apply_scale_for_window.
+    #
+    # Real follow-up bug caught live (Antonio: "wasn't able to hook to the
+    # correct position to the edge of the circle" -- close, not exact):
+    # this listener and the badge's own rebuild_for_scale listener are BOTH
+    # queued via root.after(0, ...) in the same synchronous pass, but the
+    # badge's TRUE new position for this tick isn't set by rebuild_for_scale
+    # at all (that only rebuilds its image/size for the new DPI) -- it comes
+    # from watch_loop's regular per-tick badge.show_near(rect, ...) call,
+    # which is scheduled LATER in that same pass, further back in the same
+    # after(0) queue. Re-finalizing the card immediately anchored it to the
+    # badge's STILL-STALE pre-move rect, a moment before show_near actually
+    # moved it. A short, imperceptible delay (well under one watch_loop
+    # tick) lets that real per-tick reposition land first, so this anchors
+    # to where the badge actually ends up, not where it was about to move
+    # from.
+    def _reposition_open_card_on_scale_change():
+        if popup.window is not None:
+            try:
+                popup._finalize(popup.window, *popup._pos)
+            except Exception:
+                log_exception("card reposition on scale change")
+
+    _scale_listeners.append(lambda: root.after(150, _reposition_open_card_on_scale_change))
     # Every card positions itself against the badge's live location, so a
     # follow-up card can never reopen at a stale pre-drag spot.
     popup.anchor_provider = badge.current_popup_anchor

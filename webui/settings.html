@@ -6,10 +6,10 @@
     --font:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
     --font-disp:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
     --mono:"Cascadia Code",ui-monospace,Consolas,monospace;
-    --accent:#5738C7;--on-accent:#fff;--green:#2C8A5A;--green-ink:#1E6E43;--danger:#BC5147;
+    --accent:#1B1A21;--on-accent:#fff;--green:#6E6B7B;--green-ink:#1B1A21;--danger:#1B1A21;
     --win:#fff;--side:#F5F4F9;--card:#FBFAFD;--ground:#F0EFF4;
     --ink:#1B1A21;--muted:#6E6B7B;--faint:#9B98A8;--hair:#ECEAF2;--hair2:#E2DFEC;
-    --logo:url("__BADGE_URI__");
+    --logo:url("__BADGE_URI__");--mark:url("__MARK_DARK_URI__");
   }
   /* Light-only (real ask 2026-07-25, Antonio, direct: "get rid of the
      system and dark, only keep light"). Used to have a dark @media block
@@ -19,9 +19,9 @@
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%}
   body{font-family:var(--font);color:var(--ink);background:var(--win);-webkit-font-smoothing:antialiased;display:flex;flex-direction:column;overflow:hidden}
-  .tbar{height:44px;flex:none;display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--hair)}
-  .tbar .mk{width:20px;height:20px;background:var(--logo) center/contain no-repeat}
-  .tbar .tt{font-family:var(--font-disp);font-weight:600;font-size:13px}
+  .tbar{height:60px;flex:none;display:flex;align-items:center;gap:12px;padding:0 20px;border-bottom:1px solid var(--hair)}
+  .tbar .mk{width:28px;height:28px;background:var(--mark) center/contain no-repeat}
+  .tbar .tt{font-family:var(--font-disp);font-weight:700;font-size:18px;letter-spacing:-.2px}
   .body{flex:1;display:flex;min-height:0}
   .side{width:180px;flex:none;background:var(--side);border-right:1px solid var(--hair);display:flex;flex-direction:column;padding:14px 12px}
   .nav a{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:9px;color:var(--muted);font-size:13.5px;font-weight:500;cursor:pointer;margin-bottom:3px}
@@ -35,7 +35,7 @@
   .grp{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--faint);font-weight:700;margin:20px 2px 9px}.grp:first-of-type{margin-top:4px}
   .card{background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:13px 15px;display:flex;align-items:center;gap:13px}.card+.card{margin-top:8px}
   .card.col{flex-direction:column;align-items:stretch}
-  .card .ic{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center;background:color-mix(in srgb,var(--accent) 12%,var(--card));color:var(--accent)}.card .ic svg{width:16px;height:16px}
+  .card .ic{width:30px;height:30px;border-radius:8px;flex:none;display:grid;place-items:center;background:var(--accent);color:var(--on-accent)}.card .ic svg{width:16px;height:16px}
   .card .tx{flex:1;min-width:0}.card .tx .l{font-size:13.5px;font-weight:600}.card .tx .d{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.45}
   .tg{width:40px;height:23px;border-radius:99px;background:var(--hair2);position:relative;flex:none;cursor:pointer;transition:.15s}
   .tg::after{content:"";position:absolute;top:2.5px;left:2.5px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:.15s}
@@ -54,11 +54,11 @@
   .hrow{display:flex;align-items:center;gap:12px;padding:10px 4px;border-bottom:1px solid var(--hair);font-size:12.5px}.hrow:last-child{border:none}
   .hrow .dt{color:var(--muted);width:120px;flex:none}.hrow .sv{font-family:var(--mono);flex:1;font-weight:600}
   .mchip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px}.mchip.ai{color:var(--on-accent);background:var(--accent)}.mchip.ru{color:var(--muted);background:var(--ground)}
-  .idblk{display:flex;align-items:center;gap:14px;margin-bottom:6px}.idblk .lg{width:50px;height:50px;background:var(--logo) center/contain no-repeat}
+  .idblk{display:flex;align-items:center;gap:14px;margin-bottom:6px}.idblk .lg{width:50px;height:50px;background:var(--mark) center/contain no-repeat}
   .idblk h3{font-family:var(--font-disp);font-size:20px;font-weight:700}.idblk .v{font-size:12px;color:var(--faint);font-family:var(--mono)}
-  .priv{background:color-mix(in srgb,var(--green) 12%,var(--card));border:1px solid color-mix(in srgb,var(--green) 26%,var(--card));border-radius:12px;padding:14px 15px;margin:16px 0;display:flex;gap:11px}
-  .priv svg{width:18px;height:18px;color:var(--green-ink);flex:none;margin-top:1px}.priv .t{font-weight:600;font-size:13px;color:var(--green-ink)}.priv .d{font-size:12px;color:var(--green-ink);opacity:.85;margin-top:3px;line-height:1.5}
-  .lnk{display:flex;align-items:center;gap:11px;padding:12px 4px;border-top:1px solid var(--hair);font-size:13px;color:var(--ink);cursor:pointer}.lnk:hover{color:var(--accent)}.lnk .a{margin-left:auto;color:var(--faint)}.lnk svg{width:15px;height:15px;color:var(--muted)}
+  .priv{background:var(--card);border:1px solid var(--hair);border-radius:12px;padding:14px 15px;margin:16px 0;display:flex;gap:11px}
+  .priv svg{width:18px;height:18px;color:var(--ink);flex:none;margin-top:1px}.priv .t{font-weight:600;font-size:13px;color:var(--ink)}.priv .d{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .lnk{display:flex;align-items:center;gap:11px;padding:12px 4px;border-top:1px solid var(--hair);font-size:13px;color:var(--ink);cursor:pointer}.lnk:hover{text-decoration:underline}.lnk .a{margin-left:auto;color:var(--faint)}.lnk svg{width:15px;height:15px;color:var(--muted)}
   .lnk.soon{cursor:default;color:var(--muted)}.lnk.soon:hover{color:var(--muted)}.lnk.soon .a{font-size:11px}
   .modal-bg{position:fixed;inset:0;background:rgba(10,9,14,.5);display:flex;align-items:center;justify-content:center;z-index:50;padding:24px}
   .modal{background:var(--win);border:1px solid var(--hair);border-radius:16px;width:min(540px,100%);max-height:100%;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,.4)}
@@ -93,14 +93,14 @@
       <div class="page on" data-p="general">
         <h2 class="pt">General</h2>
         <div class="grp">Startup</div>
-        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H4z"/><path d="M2 20h20"/></svg></div>
+        <div class="card">
           <div class="tx"><div class="l">Launch on login</div><div class="d">Start Comprsly when you sign in to Windows.</div></div><div class="tg" data-launch></div></div>
         <div class="grp">Where Comprsly works</div>
         <div id="cats"></div>
       </div>
       <div class="page" data-p="ai">
         <h2 class="pt">AI</h2><div class="psub">The on-device compression engine. Grammar &amp; spelling always run; the AI is optional.</div>
-        <div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/></svg></div>
+        <div class="card">
           <div class="tx"><div class="l">Use AI to compress prompts</div><div class="d">On: grammar &amp; spelling clean up, then the AI shortens the whole prompt. Off: grammar &amp; spelling only, faster and lighter.</div></div><div class="tg" data-set="ai_enabled"></div></div>
         <div class="grp">The model</div>
         <div id="modelcard"></div>
@@ -118,7 +118,7 @@
           <div><div class="t">100% on your device</div><div class="d">Nothing you type is ever sent anywhere. The only network use is the optional one-time AI-model download.</div></div></div>
         <div class="lnk" id="lnkAck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg> Acknowledgements <span class="a">›</span></div>
         <div class="lnk" id="lnkInstaller"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16v13H4z"/><path d="M9 4h6v3H9z"/></svg> Delete the installer to free space <span class="a">›</span></div>
-        <div class="lnk soon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></svg> Website &amp; support <span class="a">Coming soon</span></div>
+        <div class="lnk" id="lnkWebsite"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></svg> Website &amp; support <span class="a">comprsly.com ›</span></div>
         <div class="lnk soon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 0 1 13.6-5.6L20 8M20 3v5h-5"/></svg> Check for updates <span class="a">Coming soon</span></div>
       </div>
     </div>
@@ -134,13 +134,8 @@
   function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 
   function renderCats(cats){
-    const icons={ai_chat:'<path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>',
-      browsers:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-      comm:'<path d="M4 5h16v11H8l-4 3z"/>',
-      email_docs:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
-      other:'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/>'};
     document.getElementById("cats").innerHTML = cats.map(c=>
-      `<div class="card"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${icons[c.id]||''}</svg></div>
+      `<div class="card">
       <div class="tx"><div class="l">${esc(c.label)}</div><div class="d">${esc(c.blurb)}</div></div>
       <div class="tg ${c.on?'on':''}" data-set="${c.flag}"></div></div>`).join("");
   }
@@ -233,6 +228,11 @@
       if(e.target.closest("#lnkInstaller")){
         const r=await api().reveal_installer();
         if(!r.ok) alert("Couldn't open Downloads: "+(r.error||""));
+        return;
+      }
+      if(e.target.closest("#lnkWebsite")){
+        const r=await api().open_website();
+        if(!r.ok) alert("Couldn't open the website: "+(r.error||""));
         return;
       }
     });

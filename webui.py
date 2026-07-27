@@ -160,7 +160,8 @@ def _load_html(name):
         html = f.read()
     return (html
             .replace("__BADGE_URI__", _asset_uri("badge.png"))
-            .replace("__LOGO_URI__", _asset_uri("logo.png")))
+            .replace("__LOGO_URI__", _asset_uri("logo.png"))
+            .replace("__MARK_DARK_URI__", _asset_uri("mark_dark.png")))
 
 
 class Bridge:
@@ -459,6 +460,16 @@ class Bridge:
             else:
                 subprocess.Popen(["explorer", downloads])
             return {"ok": True, "found": bool(candidates)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def open_website(self):
+        """Opens comprsly.com in the user's default browser. The site is
+        live (2026-07-26), this was the "Coming soon" placeholder link."""
+        try:
+            import webbrowser
+            webbrowser.open("https://comprsly.com")
+            return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

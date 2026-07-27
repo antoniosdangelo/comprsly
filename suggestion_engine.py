@@ -248,6 +248,113 @@ def _find_filler_suggestions(text, protected):
     return out
 
 
+# ---- Spoken (dictated) filler words (2026-07-27, real ask) --------------
+# FILLER_PHRASES above is WRITTEN filler ("please note that," typed
+# politeness). Antonio's explicit goal for this app is dictation: "let
+# anyone ramble into the mic and get the best output." Spoken filler is a
+# different vocabulary entirely (um, uh, you know, I mean) and none of it
+# was ever cleaned -- a real, direct gap against the stated use case, not a
+# hypothetical one.
+#
+# Kept as its OWN function rather than folded into FILLER_PHRASES: a spoken
+# interjection is almost always wrapped in pause commas when transcribed
+# ("so, um, I need help"), and the plain phrase-substring mechanism only
+# deletes the word itself, leaving orphaned punctuation behind (", um," ->
+# ", ," with just "um" gone). This rule owns whichever comma(s) sit next to
+# it, at every position an interjection actually lands: sentence-start,
+# mid-sentence (bracketed by two pause commas), clause-end (one leading
+# comma), and bare with no punctuation at all -- the common raw-dictation
+# case, since speech-to-text often doesn't add commas around filler either.
+_SPOKEN_FILLER_RE = re.compile(
+    # "uh huh"/"uh-huh" listed before bare "uh+" so the compound affirmative
+    # filler is treated as one token ("uh huh yeah" -> "yeah", not "Huh
+    # yeah"): Python re alternation takes the first alternative that matches
+    # at a position, not the longest, so ordering here is load-bearing.
+    # "uh-uh" (the NEGATIVE, meaning "no") must never be stripped -- it
+    # carries real meaning, unlike everything else this rule targets. The
+    # regex alone can't exclude it (each "uh" is a separately valid match on
+    # its own), so _is_negative_uh_uh below catches it by checking each
+    # match's immediate neighbour. Verified live: without this guard, "uh-uh
+    # that's not right" corrupted into "-that's not right" (both halves
+    # independently flagged and deleted, meaning inverted AND text mangled).
+    #
+    # "you know what i mean" listed whole, before the separate "you know"
+    # and "i mean" entries, same reason "uh huh" is listed before bare "uh":
+    # verified live that leaving it split matched BOTH halves independently
+    # and orphaned the word between them -- "outdated you know what i mean"
+    # corrupted into "outdated what" (the two deletions ate everything
+    # except the one word sitting between them).
+    r"\b(?:um+|uhm|uh[\s-]+huh|uh+|erm+|hmm+|you know what i mean|"
+    r"you know|i mean)\b", re.IGNORECASE)
+
+
+def _is_negative_uh_uh(text, start, end, word):
+    """True only for a bare "uh" that's one half of "uh-uh"/"uh uh" (the
+    negative, "no"), checked by looking at the immediate neighbour on
+    either side for the mirror "uh" separated by just a hyphen or space.
+    Never fires on any other filler word this rule matches."""
+    if word.lower() != "uh":
+        return False
+    if re.search(r"uh[\s-]+$", text[:start], re.IGNORECASE):
+        return True
+    if re.match(r"^[\s-]+uh\b", text[end:], re.IGNORECASE):
+        return True
+    return False
+
+
+def _find_spoken_filler_suggestions(text, protected):
+    out = []
+    claimed = []
+    for m in _SPOKEN_FILLER_RE.finditer(text):
+        start, end = m.start(), m.end()
+        if _overlaps_any(start, end, protected) or _overlaps_any(start, end, claimed):
+            continue
+        if _is_negative_uh_uh(text, start, end, m.group(0)):
+            continue
+        trail = re.match(r"\s*,\s*", text[end:])
+        lead = re.search(r",\s*$", text[:start])
+        if trail and lead:
+            # Bracketed both sides ("I need, um, help"): absorb the leading
+            # comma in full but only the trailing COMMA itself, not its
+            # trailing space, so exactly one space survives between the two
+            # words left behind ("I need help", not "I needhelp").
+            del_start = lead.start()
+            trail_comma_only = re.match(r"\s*,", text[end:])
+            del_end = end + trail_comma_only.end()
+        elif trail:
+            # Sentence/clause start ("Um, I need help"): absorb the comma
+            # AND its trailing space, so the next word isn't left with a
+            # stray leading space.
+            del_start, del_end = start, end + trail.end()
+        elif lead:
+            # Clause end, nothing after ("I need help, um"): absorb just
+            # the leading comma and its own leading space.
+            del_start, del_end = lead.start(), end
+        else:
+            # Bare, no punctuation at all -- the common plain-dictation
+            # case. Absorb exactly one adjacent space so the two remaining
+            # words don't collide, preferring the trailing space; if the
+            # filler is the very last word, take the leading one instead.
+            del_start, del_end = start, end
+            if end < len(text) and text[end] == " ":
+                del_end = end + 1
+            elif start > 0 and text[start - 1] == " ":
+                del_start = start - 1
+        if _overlaps_any(del_start, del_end, protected) or _overlaps_any(del_start, del_end, claimed):
+            continue
+        s = _make_suggestion(
+            "filler", "Drop the verbal filler", del_start, del_end,
+            text[del_start:del_end], "",
+        )
+        if s:
+            out.append(s)
+            claimed.append((del_start, del_end))
+            cap = _capitalize_after_deletion(text, del_start, del_end, protected)
+            if cap:
+                out.append(cap)
+    return out
+
+
 def _find_verbose_suggestions(text, protected):
     out = []
     for pattern, replacement in VERBOSE_REPLACEMENTS:
@@ -650,6 +757,18 @@ _SPELLING_OVERRIDES = {
     # see the independent override scan below, which is what actually makes
     # this entry reachable.
     "wat": "what",
+    # Casual-speech contraction Windows' dictionary silently accepts as its
+    # own real word (2026-07-27, dictation audit): "kinda" is a legitimate
+    # dictionary entry to winspell, so it's never flagged, and generic
+    # edit-distance guessing on the rare occasion it IS flagged picks "kind"
+    # (drops the softening "of" entirely, changing the meaning: "kinda
+    # outdated" -> "kind outdated"). Reachable the same way "wat" is, via
+    # the independent override scan below, regardless of winspell's opinion.
+    # "gonna"/"wanna"/"gotta"/"sorta"/"lemme"/"gimme" are deliberately NOT
+    # here: each is unambiguous casual English on its own (no dropped word
+    # changes meaning the way "kinda" does), so normalizing them is a style
+    # choice, not a correctness fix, and this table is for correctness.
+    "kinda": "kind of",
 }
 # A few keys above sit in the dict only for clarity/None-guard; drop those.
 _SPELLING_OVERRIDES = {k: v for k, v in _SPELLING_OVERRIDES.items() if v}
@@ -676,6 +795,32 @@ _KNOWN_CORRECT_WORDS = {
     "repo", "repos", "backend", "frontend", "middleware", "webhook",
     "webhooks", "endpoint", "endpoints", "localhost", "stdout", "stderr",
     "stdin", "kwargs", "args", "bool", "enum", "init",
+    # Second, much larger sweep (2026-07-27, dictation audit): tested every
+    # common dev/product/business acronym and tool name against the live
+    # spell checker, each entry below is a CONFIRMED mangle, not a guess --
+    # "api" -> "apio", "postgres" -> "postures", "mongodb" -> "monody",
+    # "vp" -> "vape", "llm" -> "llama", "gpt" -> "got", among many others.
+    # Database/API/backend:
+    "postgres", "postgresql", "mongodb", "mongo", "graphql", "oauth",
+    "oauth2", "jwt", "jwts", "cors", "uuid", "uuids", "api", "apis",
+    "grpc", "orm", "nosql", "sdk", "sdks", "crud",
+    # Frontend/tooling:
+    "ux", "ui", "vite", "eslint", "pnpm", "fastapi", "websocket",
+    "websockets", "ssr", "csr", "vscode", "swiftui", "kotlin", "rustlang",
+    # Infra/networking:
+    "gpu", "gpus", "ssh", "ssl", "tls", "dns", "vpn", "tcp", "udp", "zsh",
+    "devops", "saas", "paas", "iaas",
+    # Companies/products/platforms (proper nouns winspell doesn't know and
+    # edit-distance mangles into an unrelated real word):
+    "circleci", "vercel", "netlify", "aws", "gcp", "supabase", "symfony",
+    "shopify", "figma",
+    # Business/product acronyms (this app's stated goal is dictating real
+    # work prompts, not just code -- these are exactly as core-audience as
+    # the technical ones above):
+    "mvp", "poc", "kpi", "kpis", "seo", "cta", "cpc", "cpa", "nda", "rfp",
+    "cto", "cfo", "vp",
+    # AI/ML (this app's own domain):
+    "llm", "llms", "gpt", "genai", "nlp", "ocr", "svg", "png", "tsv",
 }
 
 # Fast-typing slip (real bug 2026-07-24, Antonio): dropping the space before
@@ -1984,6 +2129,8 @@ def analyze(text: str):
     protected = _protected_spans(text)
     suggestions = []
     suggestions.extend(_tag(_find_filler_suggestions(text, protected),
+                            3, "Optional style trim"))
+    suggestions.extend(_tag(_find_spoken_filler_suggestions(text, protected),
                             3, "Optional style trim"))
     suggestions.extend(_tag(_find_verbose_suggestions(text, protected),
                             3, "Optional wording change"))

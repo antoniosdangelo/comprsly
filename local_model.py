@@ -366,6 +366,108 @@ _RETRY_REMINDER = (
     "throat-clearing; dropping it would leave the question unanswerable."
 )
 
+# Bullet-structure retry addendum, added 2026-07-27, kept SEPARATE from
+# _RETRY_REMINDER above on purpose. First attempt appended this straight
+# onto _RETRY_REMINDER, on the theory that it's still confined to the
+# already-rare retry path so it "can't regress a healthy compress". That
+# reasoning was wrong: _RETRY_REMINDER is shared by EVERY retry, including
+# the plain-collapse retries that have nothing to do with bullets (e.g. a
+# rambling non-list prompt). Measured via tools_eval_compression.py before/
+# after: long_ramble's retry -- a collapse-only case, no list in sight --
+# went from retention 0.78 to 0.33 purely because the longer combined
+# reminder text changed what the retry generated for THAT prompt too.
+# Fix: keep the two reminders separate and only append this one when the
+# SOURCE actually has bullet structure, so a non-list retry's prompt is
+# byte-identical to what it was before this feature existed.
+_BULLET_RETRY_ADDENDUM = (
+    "\n\nAlso: if the original prompt uses a bulleted or numbered list, your "
+    "compressed version must ALSO use a bulleted or numbered list. Never "
+    "merge list items into one prose sentence.\n\n"
+    "Example.\n"
+    "<prompt>\n"
+    "Reminders for tomorrow:\n"
+    "- Pick up the dry cleaning before 6pm\n"
+    "- Email the client the signed invoice\n"
+    "- Water the plants before I leave for the trip\n"
+    "</prompt>\n"
+    "You reply with exactly this and nothing else:\n"
+    "Reminders:\n"
+    "- Pick up dry cleaning before 6pm\n"
+    "- Email client the signed invoice\n"
+    "- Water plants before the trip\n\n"
+    "Notice the list stayed a list, just with shorter items, not one merged "
+    "sentence."
+)
+
+
+# Reason-buildup retry addendum, added 2026-07-27 for context_then_question
+# (tools_eval_compression.py, ret 0.67, the last case still below the 0.75
+# floor). Two prior fixes already tried and reverted for this exact case:
+# a SYSTEM_PROMPT example (Example 5, regressed product_desc) and the
+# generic collapse-guard retry reminder alone (helped 0.50->0.67 but
+# plateaued, missing "notifications"/"busy" in every retried candidate
+# tested, independent of repetition_penalty -- verified directly, this is a
+# content-selection gap in the reminder's own wording, not a decoding
+# artifact). This is a NEW, narrower angle: the existing retry example
+# (design-software-subscription) demonstrates keeping enumerated NUMERIC
+# facts before a decision question; this prompt's reasons are qualitative
+# ("busy", "notifications"), a different shape the numeric example doesn't
+# transfer to. A matching qualitative-reasons example, gated behind its own
+# detector exactly like _BULLET_RETRY_ADDENDUM (never touches a healthy or
+# unrelated retry), measured via direct model calls: recovers ALL 6
+# must-keep terms on the target case (0.67 -> 1.00). Full eval re-run
+# required before shipping, same rule as every other prompt change here.
+_REASON_BUILDUP_MIN_SENTENCES = 4
+
+
+def _has_reason_buildup(text):
+    """True for a prompt that ends in a question after several buildup
+    sentences (context/reasons stated before the ask) -- a general,
+    structural shape, not tied to any specific wording, so it can't be
+    mistaken for teaching to one eval case."""
+    text = (text or "").strip()
+    if not text.endswith("?"):
+        return False
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    return len(sentences) >= _REASON_BUILDUP_MIN_SENTENCES
+
+
+_REASON_BUILDUP_RETRY_ADDENDUM = (
+    "\n\nAlso: if the prompt gives several separate reasons or context "
+    "points before a final question, your compressed version must keep "
+    "EACH distinct reason, not just the closing question.\n\n"
+    "Example.\n"
+    "<prompt>\n"
+    "I've been thinking about whether to switch our team standup from daily "
+    "to twice a week. Part of it is that people seem to be losing focus "
+    "with a meeting every single day, and also a few teammates mentioned "
+    "it's hard to fit in around client calls. I want to make the right "
+    "call here rather than just going with a gut feeling. Can you help me "
+    "think through the tradeoffs and give me a clear recommendation?\n"
+    "</prompt>\n"
+    "You reply with exactly this and nothing else:\n"
+    "Should we switch daily standup to twice a week? Team is losing focus "
+    "with a meeting every day, and it's hard to fit around client calls. "
+    "Give tradeoffs and a clear recommendation.\n\n"
+    "Notice both reasons (losing focus, hard to fit around client calls) "
+    "survived, not just the closing question."
+)
+
+
+def _retry_reminder_for(text):
+    """Which retry reminder to use for THIS source text. Structural add-ons
+    (bullets, reason-buildup) stack on top of the base reminder only when
+    their own detector matches, so a retry with neither shape is byte-
+    identical to the original reminder -- can't be affected by a feature
+    that has nothing to do with it (see _BULLET_RETRY_ADDENDUM and
+    _REASON_BUILDUP_RETRY_ADDENDUM)."""
+    reminder = _RETRY_REMINDER
+    if _has_bullet_structure(text):
+        reminder += _BULLET_RETRY_ADDENDUM
+    if _has_reason_buildup(text):
+        reminder += _REASON_BUILDUP_RETRY_ADDENDUM
+    return reminder
+
 
 def _looks_collapsed(source_text, out_text):
     src_w = len((source_text or "").split())
@@ -373,6 +475,36 @@ def _looks_collapsed(source_text, out_text):
     if src_w < _COLLAPSE_MIN_SOURCE_WORDS or out_w == 0:
         return False
     return (1 - out_w / src_w) > _COLLAPSE_RATIO
+
+
+# --- Bullet-structure-preservation guard (2026-07-27, real ask) ----------
+# Antonio, direct: dictated/typed bullet-point input should compress to
+# bullet-point output, not get flattened into one prose sentence. Measured
+# baseline via tools_eval_compression.py's new bullet_week_plan case before
+# writing any fix (this file's own standing rule): a 4-item bulleted list
+# collapsed into a single comma-separated sentence AND dropped one of the
+# must-keep items ("sarah") in the process. Same shape as the
+# context_then_question collapse bug above -- a real, reproduced failure
+# mode, not a hypothetical -- so it gets the same fix shape: a runtime
+# detector plus a retry confined to the retry path, not a change to the
+# main SYSTEM_PROMPT (which is paid on every single compress and has a
+# documented history of two prior 5th/6th-example attempts regressing
+# other cases when baked in there instead).
+_BULLET_LINE_RE = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+\S")
+
+
+def _has_bullet_structure(text):
+    lines = (text or "").split("\n")
+    return sum(1 for ln in lines if _BULLET_LINE_RE.match(ln)) >= 2
+
+
+def _looks_bullet_lost(source_text, out_text):
+    """True only when the SOURCE was genuinely list-shaped and the OUTPUT
+    isn't -- never fires on a prompt that was never a list, so a healthy
+    non-list compress can't be touched by this guard at all."""
+    if not out_text:
+        return False
+    return _has_bullet_structure(source_text) and not _has_bullet_structure(out_text)
 
 
 # --- Statement-to-request-inversion guard (2026-07-25, still-open bug) ---
@@ -1218,12 +1350,15 @@ def rewrite_prompt(text, max_new_tokens=None, _system=None, _retry=False):
             f"{len(_tokenizer.encode(cleaned))} tokens, generated "
             f"{len(output_tokens)}/{budget}{' (HIT CAP)' if hit_cap else ''}"
         )
-        if not _retry and _looks_collapsed(text, cleaned):
-            _log(f"rewrite via {spec['key']}: looks collapsed "
+        collapsed = _looks_collapsed(text, cleaned)
+        bullet_lost = _looks_bullet_lost(text, cleaned)
+        if not _retry and (collapsed or bullet_lost):
+            reason = "collapsed" if collapsed else "lost bullet structure"
+            _log(f"rewrite via {spec['key']}: looks {reason} "
                  f"({len(cleaned.split())}w from {len(text.split())}w source), retrying once")
             retried, _ = rewrite_prompt(text, max_new_tokens,
-                                        _system=SYSTEM_PROMPT + _RETRY_REMINDER, _retry=True)
-            if retried and not _looks_collapsed(text, retried):
+                                        _system=SYSTEM_PROMPT + _retry_reminder_for(text), _retry=True)
+            if retried and not _looks_collapsed(text, retried) and not _looks_bullet_lost(text, retried):
                 return _finish_rewrite(text, retried)
             # Real ask 2026-07-24 (Antonio): a compressed-but-imperfect result
             # beats a hard failure, the app should never hand back nothing.
@@ -1234,7 +1369,7 @@ def rewrite_prompt(text, max_new_tokens=None, _system=None, _retry=False):
             best = cleaned
             if retried and len(retried.split()) > len(cleaned.split()):
                 best = retried
-            _log("rewrite: retry still looked collapsed, returning best-effort result anyway")
+            _log("rewrite: retry still had issues, returning best-effort result anyway")
             return _finish_rewrite(text, best)
         return _finish_rewrite(text, cleaned)
     except Exception as e:
@@ -1306,8 +1441,16 @@ def _run_cached(cache, system_prompt, text, max_new_tokens):
     None, exactly the same contract the single-cache version had."""
     import onnxruntime_genai as og
     spec = active_spec()
+    # system_prompt identity check (not just spec_key) matters for
+    # _retry_cached specifically: since 2026-07-27 the retry reminder
+    # varies per call (_retry_reminder_for picks a plain or bullet-augmented
+    # variant), so this single slot must rebuild whenever the variant
+    # changes, or it would silently serve a stale prefix built for the
+    # OTHER variant -- exactly the kind of cross-contamination that caused
+    # the long_ramble regression this check exists to prevent.
     if (cache["gen"] is None or cache["model"] is not _model
-            or cache["spec_key"] != spec["key"]):
+            or cache["spec_key"] != spec["key"]
+            or cache.get("system_prompt") != system_prompt):
         sys_block, _ = _split_template(spec, system=system_prompt)
         sys_tokens = _tokenizer.encode(sys_block)
         max_len = len(sys_tokens) + _CACHE_USER_SPAN
@@ -1321,7 +1464,8 @@ def _run_cached(cache, system_prompt, text, max_new_tokens):
         gen = og.Generator(_model, params)
         gen.append_tokens(sys_tokens)
         cache.update(gen=gen, checkpoint=gen.token_count(), model=_model,
-                     spec_key=spec["key"], max_len=max_len)
+                     spec_key=spec["key"], max_len=max_len,
+                     system_prompt=system_prompt)
         _log(f"prefill cache built: {spec['key']}, {cache['checkpoint']} sys tokens")
 
     _, user_tmpl = _split_template(spec, system=system_prompt)
@@ -1371,8 +1515,11 @@ def rewrite_prompt_cached(text, max_new_tokens=None):
         _log(f"rewrite (cached) via {spec['key']}: {source_tokens} -> "
              f"{len(_tokenizer.encode(cleaned))} tokens, generated "
              f"{len(output_tokens)}/{budget}")
-        if _looks_collapsed(text, cleaned):
-            _log(f"rewrite (cached) via {spec['key']}: looks collapsed "
+        collapsed = _looks_collapsed(text, cleaned)
+        bullet_lost = _looks_bullet_lost(text, cleaned)
+        if collapsed or bullet_lost:
+            reason = "collapsed" if collapsed else "lost bullet structure"
+            _log(f"rewrite (cached) via {spec['key']}: looks {reason} "
                  f"({len(cleaned.split())}w from {len(text.split())}w source), retrying once")
             # Real fix 2026-07-24 (latency audit): the retry now goes through
             # its OWN warm cache (_retry_cached) instead of the fully-fresh
@@ -1380,7 +1527,8 @@ def rewrite_prompt_cached(text, max_new_tokens=None):
             # cost ~14-21s (re-paying the ~7-9s system-prompt prefill every
             # time) for a result that, per that same live measurement, didn't
             # even end up better than the first attempt.
-            retry_result = _run_cached(_retry_cached, SYSTEM_PROMPT + _RETRY_REMINDER,
+            retry_reminder = _retry_reminder_for(text)
+            retry_result = _run_cached(_retry_cached, SYSTEM_PROMPT + retry_reminder,
                                         text, max_new_tokens)
             if retry_result is not None:
                 retried, r_tokens, r_budget, r_source = retry_result
@@ -1391,15 +1539,15 @@ def rewrite_prompt_cached(text, max_new_tokens=None):
                 # Didn't fit the retry cache's window either: same fallback
                 # the primary path takes, fresh (uncached) generation.
                 retried, _ = rewrite_prompt(text, max_new_tokens,
-                                            _system=SYSTEM_PROMPT + _RETRY_REMINDER, _retry=True)
-            if retried and not _looks_collapsed(text, retried):
+                                            _system=SYSTEM_PROMPT + retry_reminder, _retry=True)
+            if retried and not _looks_collapsed(text, retried) and not _looks_bullet_lost(text, retried):
                 return _finish_rewrite(text, retried)
             # Best-effort, never a hard failure (2026-07-24, Antonio): return
             # whichever candidate kept more words, same as rewrite_prompt.
             best = cleaned
             if retried and len(retried.split()) > len(cleaned.split()):
                 best = retried
-            _log("rewrite (cached): retry still looked collapsed, returning best-effort result anyway")
+            _log("rewrite (cached): retry still had issues, returning best-effort result anyway")
             return _finish_rewrite(text, best)
         return _finish_rewrite(text, cleaned)
     except Exception as e:
