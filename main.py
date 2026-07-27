@@ -615,7 +615,7 @@ BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 # Displayed in the settings status bar and About. MUST be bumped together
 # with version_info.txt and installer.iss (it drifted to a stale 0.9.4 while
 # those advanced, so the UI lied about the version -- 2026-07-22).
-APP_VERSION = "0.9.90"
+APP_VERSION = "0.9.92"
 
 
 def _heat_color(count):
@@ -3179,6 +3179,31 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
             # (which turned out not to be the real key name).
             _self_injecting[0] = True
             try:
+                # Real gap found by code review 2026-07-27 (same session,
+                # after the cross-window buffer-leak fix -- Antonio asked
+                # for a full pass on this whole area, not just the one
+                # reported symptom): force_foreground() above already
+                # confirmed the target window landed in the foreground
+                # ONCE, but nothing re-checked that between then and here.
+                # A slow AI-compression Apply can take 15-30+ seconds
+                # (see apply_new_text's docstring), and with multiple
+                # terminal windows open, real user input (alt-tab,
+                # clicking another window) during that gap would mean
+                # every Ctrl+U/keystroke below lands wherever focus
+                # ACTUALLY is now, not necessarily target_hwnd. Cheap,
+                # bracketing re-check: if the foreground window has
+                # already drifted away before a single keystroke gets
+                # sent, abort instead of clearing/typing into whatever
+                # the user is now actually looking at.
+                if ctypes.windll.user32.GetForegroundWindow() != target_hwnd:
+                    log("apply_new_text (terminal): ABORTED, foreground window changed before clearing started")
+                    popup.show_error(
+                        *popup.last_position(),
+                        "Comprsly lost track of your terminal window before applying, "
+                        "so it left it untouched.\n\nClick back into the box and press "
+                        "Apply again.",
+                    )
+                    return False
                 if old_len:
                     # Real ask 2026-07-26 (Antonio, direct: backspacing is
                     # unappealing, wants instant delete-and-replace like
@@ -3294,6 +3319,21 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
                             "again.",
                         )
                         return False
+                # Second bracketing re-check, right before the single
+                # most consequential action (typing the actual replacement
+                # text) -- see the matching checkpoint above the clearing
+                # loop for the full reasoning. The clearing loop itself
+                # can take several seconds; re-verify one more time that
+                # focus hasn't moved on since.
+                if ctypes.windll.user32.GetForegroundWindow() != target_hwnd:
+                    log("apply_new_text (terminal): ABORTED, foreground window changed during clearing")
+                    popup.show_error(
+                        *popup.last_position(),
+                        "Comprsly lost track of your terminal window while clearing it, "
+                        "so it left it untouched.\n\nClick back into the box and press "
+                        "Apply again.",
+                    )
+                    return False
                 auto.SendKeys(_sendkeys_escape(new_text), waitTime=0.01)
             finally:
                 _self_injecting[0] = False
@@ -6841,8 +6881,29 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             if confirmed_empty:
                 reset_typed_buffer()
             elif not uia_readable:
-                text = get_typed_buffer() or None
-                text_source = "buffer"
+                # Real bug found live 2026-07-27 (Antonio, direct repro:
+                # Apply typed text he'd written in a DIFFERENT terminal
+                # window into this one): the keystroke buffer is a single
+                # GLOBAL capture from the low-level keyboard hook, with no
+                # idea which WINDOW the keys landed in. Its reset only
+                # fires on an app-level context change (context_label,
+                # e.g. leaving a terminal for Chrome), not when switching
+                # between TWO terminal windows that both report the same
+                # context_label -- so content typed in one terminal
+                # window leaked into another terminal window's
+                # suggestions and got typed there by Apply. Terminals now
+                # have a real, reliable ground-truth read for every case
+                # that matters (_extract_terminal_input_line's UIA
+                # line-navigation fix, same day) -- the buffer fallback
+                # exists for apps that expose NOTHING via UIA at all
+                # (Claude's Electron build), which terminals aren't.
+                # Excluding terminals here means an unreadable terminal
+                # tick now correctly shows nothing, same fail-safe
+                # philosophy as everywhere else in the terminal path,
+                # instead of risking cross-window content leakage.
+                if process_name not in TERMINAL_HOST_PROCESSES:
+                    text = get_typed_buffer() or None
+                    text_source = "buffer"
 
             if not text:
                 badge.root.after(0, badge.hide)
