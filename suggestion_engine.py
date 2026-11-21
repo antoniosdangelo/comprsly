@@ -1883,6 +1883,218 @@ _FEWER_NOUNS = {
 _LESS_TO_FEWER_RE = re.compile(
     r"\b(less)\s+(?=(?:" + "|".join(_FEWER_NOUNS) + r")\b)", re.IGNORECASE)
 
+# 13-35. Real-word errors (2026-07-28 research pass, Antonio): a typo that
+# lands on ANOTHER real word ("bale" for "able"), not a sound-alike homophone.
+# Same rule as everything above: a positive trigger construction only, never
+# a blanket word-for-word swap, so a legitimate use of the "wrong" word (a
+# bale of hay, a coat hanger, an actual desert) is never touched.
+
+# 13. affect -> effect, only as "DET (ADJ) affect on", the one frame where
+# "affect" can't be the verb (a verb never sits between a determiner and its
+# own object's "on"). "will affect the outcome" (verb, correct) is untouched.
+_AFFECT_DETS = {"a", "an", "the", "his", "her", "its", "their", "our", "my",
+                 "some", "any", "no", "this", "that"}
+_AFFECT_TO_EFFECT_RE = re.compile(
+    r"\b(?:" + "|".join(_AFFECT_DETS) + r")\s+(?:\w+\s+){0,2}(affect)\s+on\b",
+    re.IGNORECASE)
+
+# 14. desert -> dessert, gated to a food/eating verb right before it -- these
+# never legitimately take the geographic/verb "desert" as their object.
+_DESSERT_PRECEDERS = {
+    "eat", "ate", "eating", "have", "had", "want", "wanted", "order",
+    "ordered", "serve", "served", "crave", "craved", "craving", "share",
+    "shared", "finish", "finished", "skip", "skipped",
+}
+_DESERT_TO_DESSERT_RE = re.compile(r"\b(desert)\b", re.IGNORECASE)
+
+# 15. discreet -> discrete, gated to a technical/countable plural noun right
+# after -- "discreet" (an adjective about tact) never modifies these.
+_DISCRETE_NOUNS = {
+    "steps", "units", "values", "components", "items", "categories",
+    "variables", "events", "objects", "entities", "intervals", "parts",
+    "pieces", "stages", "phases", "chunks", "blocks", "elements", "chunks",
+}
+_DISCREET_TO_DISCRETE_RE = re.compile(
+    r"\b(discreet)\s+(?=(?:" + "|".join(_DISCRETE_NOUNS) + r")\b)",
+    re.IGNORECASE)
+
+# 16. compliment -> complement, gated to the fixed "each other"/"one another"
+# frame -- praising each other is real but rare next to this exact phrasing;
+# "complement each other" (things fitting together) is the overwhelming read.
+_COMPLIMENT_TO_COMPLEMENT_RE = re.compile(
+    r"\b(compliment)\s+(?:each\s+other|one\s+another)\b", re.IGNORECASE)
+
+# 17. stationary -> stationery, gated to a buy/shop/office-supplies frame --
+# "stationary" (not moving) never occurs there.
+_STATIONERY_PRECEDERS = {"buy", "bought", "order", "ordered", "need",
+                          "needed", "office"}
+_STATIONERY_FOLLOWERS = {"store", "shop", "drawer", "cabinet", "supplies",
+                          "set", "aisle"}
+_STATIONARY_TO_STATIONERY_RE = re.compile(r"\b(stationary)\b", re.IGNORECASE)
+
+# 18. elicit -> illicit, gated to DET + elicit + a noun naming something
+# illegal -- "elicit" is a verb (elicit a response) and can't sit directly
+# between a determiner and one of these nouns.
+_ILLICIT_NOUNS = {
+    "drug", "drugs", "activity", "activities", "affair", "affairs", "goods",
+    "substance", "substances", "trade", "material", "materials", "behavior",
+    "behaviour",
+}
+_ELICIT_TO_ILLICIT_RE = re.compile(
+    r"\b(elicit)\s+(?=(?:" + "|".join(_ILLICIT_NOUNS) + r")\b)",
+    re.IGNORECASE)
+
+# 19. allusion -> illusion, gated to the fixed "under the allusion" idiom
+# (should be "under the illusion") -- a genuine allusion is never the object
+# of "under".
+_ALLUSION_TO_ILLUSION_RE = re.compile(
+    r"\bunder\s+(?:the|an?)\s+(allusion)\b", re.IGNORECASE)
+
+# 20. council -> counsel, gated to a seek/need/legal-advice frame -- "council"
+# (a body of people) is never sought or given as advice this way.
+_COUNSEL_PRECEDERS = {"seek", "seeking", "sought", "need", "needed", "get",
+                       "got", "wise", "legal", "professional"}
+_COUNCIL_TO_COUNSEL_RE = re.compile(r"\b(council)\b", re.IGNORECASE)
+
+# 21. envelop -> envelope, gated to DET + envelop with nothing after (a bare
+# noun position) -- the verb "envelop" needs an object right after it
+# ("envelop the city"), so DET + envelop + end-of-clause can only be the noun.
+_ENVELOP_DETS = {"a", "an", "the", "my", "your", "his", "her", "its", "our",
+                  "their", "this", "that"}
+_ENVELOP_TO_ENVELOPE_RE = re.compile(
+    r"\b(?:" + "|".join(_ENVELOP_DETS) + r")\s+(envelop)\b(?!\s+\w)",
+    re.IGNORECASE)
+
+# 22. breath -> breathe, gated to a modal/infinitive right before -- the noun
+# "breath" never directly follows a bare modal or "to" that way.
+_BREATHE_PRECEDERS = {"cant", "can't", "cannot", "couldnt", "couldn't", "to",
+                       "will", "wont", "won't", "please"}
+_BREATH_RE = re.compile(r"\b(breath)\b", re.IGNORECASE)
+
+# 23. loose -> lose, gated to a modal/infinitive right before -- the adjective
+# "loose" never directly follows a bare modal that way ("don't loose the
+# game" can only mean "don't lose").
+_LOSE_PRECEDERS = {"dont", "don't", "wont", "won't", "cant", "can't", "to",
+                    "will", "might", "should", "would", "could", "didnt",
+                    "didn't", "never"}
+_LOOSE_RE = re.compile(r"\b(loose)\b", re.IGNORECASE)
+
+# 24. quiet -> quite, gated to the fixed "a few/bit/lot/while" frame --
+# "quiet" (silent) is never followed by this quantity phrase.
+_QUIET_TO_QUITE_RE = re.compile(
+    r"\b(quiet)\s+a\s+(?:few|bit|lot|while)\b", re.IGNORECASE)
+
+# 25. moral -> morale, gated to a group noun + a state/level word -- "moral"
+# (ethics-related) doesn't take "is low/high" this way; "team/staff morale"
+# does.
+_MORALE_GROUPS = {"team", "employee", "employees", "staff", "company",
+                   "troop", "troops", "soldier", "soldiers", "worker",
+                   "workers", "office", "crew", "squad"}
+_MORALE_STATES = {"is", "was", "are", "were", "low", "high", "dropped",
+                   "dropping", "boosted", "boosting"}
+_MORAL_TO_MORALE_RE = re.compile(
+    r"\b(?:" + "|".join(_MORALE_GROUPS) + r")\s+(moral)\s+(?=(?:" +
+    "|".join(_MORALE_STATES) + r")\b)", re.IGNORECASE)
+
+# 26. pray -> prey, gated to the fixed "fall(s)/fell/falling pray" idiom
+# (should be "fall prey to").
+_PRAY_TO_PREY_RE = re.compile(
+    r"\b(?:fall|falls|fell|falling)\s+(pray)\b", re.IGNORECASE)
+
+# 27. peak -> peek, gated to the fixed "take/have/sneak/get/give a peak" idiom
+# (should be "a peek").
+_PEAK_TO_PEEK_RE = re.compile(
+    r"\b(?:take|took|have|had|sneak|sneaked|snuck|get|got|give|gave)\s+a\s+"
+    r"(peak)\b", re.IGNORECASE)
+
+# 28. waist -> waste, gated to the fixed "a waist of time/money/..." idiom
+# (should be "a waste of").
+_WASTE_OF_NOUNS = {"time", "money", "effort", "energy", "resources", "space"}
+_WAIST_TO_WASTE_RE = re.compile(
+    r"\ba\s+(waist)\s+of\s+(?=(?:" + "|".join(_WASTE_OF_NOUNS) + r")\b)",
+    re.IGNORECASE)
+
+# 29. hangar -> hanger, gated to a clothing noun right before -- an aircraft
+# hangar never follows these.
+_HANGER_PRECEDERS = {"coat", "clothes", "clothing", "closet", "wardrobe"}
+_HANGAR_RE = re.compile(r"\b(hangar)\b", re.IGNORECASE)
+
+# 30. tenant -> tenet, gated to a "core/founding/guiding belief" frame --
+# same value-adjective pattern as principle/principal (rule 10). "a core
+# tenant of our philosophy" is a very common real-world slip for "tenet".
+_TENET_VALUE_ADJECTIVES = {"core", "basic", "central", "key", "founding",
+                            "guiding", "fundamental", "main", "underlying"}
+_TENANT_STATES = {"of", "is", "are", "was", "were"}
+_TENANT_TO_TENET_RE = re.compile(
+    r"\b(?:" + "|".join(_TENET_VALUE_ADJECTIVES) + r")\s+(tenant)s?\s+(?=(?:"
+    + "|".join(_TENANT_STATES) + r")\b)", re.IGNORECASE)
+
+# 31. corral -> coral, gated to "reef(s)" right after -- a corral (livestock
+# pen) is never followed by "reef".
+_CORRAL_TO_CORAL_RE = re.compile(
+    r"\b(corral)\s+(?=reefs?\b)", re.IGNORECASE)
+
+# 32. untied -> united, gated to the proper-noun frame (States/Kingdom/
+# Nations) -- shoelaces/loose-ends "untied" never precede these.
+_UNTIED_TO_UNITED_RE = re.compile(
+    r"\b(untied)\s+(?=(?:States|Kingdom|Nations|Arab\s+Emirates)\b)",
+    re.IGNORECASE)
+
+# 33. bale -> able, gated to NOT being followed by "of" -- a real bale (hay,
+# cotton, straw) is essentially always "a bale OF something"; bare "bale" in
+# any other position is the "able" typo (letter transposition, ab->ba).
+_BALE_TO_ABLE_RE = re.compile(r"\b(bale)\b(?!\s+of\b)", re.IGNORECASE)
+
+# 34. currant -> current, gated to a common "current"-only context word right
+# after -- a currant (the dried fruit) is never followed by these.
+_CURRENT_FOLLOWERS = {
+    "affairs", "events", "situation", "version", "state", "price", "rate",
+    "account", "password", "location", "status", "job", "role", "position",
+}
+_CURRANT_TO_CURRENT_RE = re.compile(
+    r"\b(currant)\s+(?=(?:" + "|".join(_CURRENT_FOLLOWERS) + r")\b)",
+    re.IGNORECASE)
+
+# 35. manger -> manager, gated to a workplace-role frame -- a real manger
+# (the nativity/hay-trough one) never sits next to these; this also keeps
+# "away in a manger" (the carol) untouched since it never matches this shape.
+_MANAGER_DETS = {"the", "a", "our", "my", "your", "his", "her", "their"}
+_MANAGER_FOLLOWERS = {"said", "told", "asked", "wants", "needs", "approved",
+                       "decided", "position", "role", "meeting"}
+_MANGER_TO_MANAGER_RE = re.compile(
+    r"\b(?:" + "|".join(_MANAGER_DETS) + r")\s+(manger)\s+(?=(?:" +
+    "|".join(_MANAGER_FOLLOWERS) + r")\b)", re.IGNORECASE)
+
+
+# Small skip-set for the lookback helper below: determiners/quantifiers that
+# commonly sit between a trigger verb and its object ("buy SOME stationary",
+# "coat ON A hangar") without breaking the real-word-error read.
+_LOOKBACK_SKIP_WORDS = {"a", "an", "the", "some", "any", "on", "in", "onto",
+                         "your", "my", "his", "her", "their", "our", "its"}
+
+
+def _trigger_within(text, pos, trigger_set, max_words=3):
+    """True if one of trigger_set's words appears within max_words tokens
+    before position `pos`, skipping over small determiners/prepositions
+    (_LOOKBACK_SKIP_WORDS) and stopping at a clause boundary. Lets a gate
+    match "buy some stationary" / "coat on a hangar", not just an
+    immediately-adjacent trigger word."""
+    before = text[:pos]
+    if re.search(r"[.!?\n]\s*$", before):
+        return False
+    words = re.findall(r"[\w']+", before)
+    checked = 0
+    for w in reversed(words):
+        wl = w.lower()
+        if wl in trigger_set:
+            return True
+        if wl in _LOOKBACK_SKIP_WORDS:
+            continue
+        checked += 1
+        if checked >= max_words:
+            break
+    return False
+
 
 def _apply_case(template_first_upper, replacement):
     """Uppercase replacement's first letter if the original started upper."""
@@ -2093,6 +2305,163 @@ def _find_confusable_suggestions(text, protected):
         l_s, l_e = m.start(1), m.end(1)
         add(l_s, l_e, _apply_case(text[l_s].isupper(), "fewer"),
             "Use “fewer” (countable)")
+
+    # 13. affect -> effect (DET (ADJ) affect on)
+    for m in _AFFECT_TO_EFFECT_RE.finditer(text):
+        a_s, a_e = m.start(1), m.end(1)
+        add(a_s, a_e, _apply_case(text[a_s].isupper(), "effect"),
+            "Use “effect” (noun)")
+
+    # 14. desert -> dessert (food/eating verb precedes it)
+    for m in _DESERT_TO_DESSERT_RE.finditer(text):
+        d_s, d_e = m.start(1), m.end(1)
+        prev = re.search(r"(\w+)\s*$", text[:d_s])
+        if not (prev and prev.group(1).lower() in _DESSERT_PRECEDERS):
+            continue
+        add(d_s, d_e, _apply_case(text[d_s].isupper(), "dessert"),
+            "Use “dessert” (food)")
+
+    # 15. discreet -> discrete (technical/countable noun follows)
+    for m in _DISCREET_TO_DISCRETE_RE.finditer(text):
+        d_s, d_e = m.start(1), m.end(1)
+        add(d_s, d_e, _apply_case(text[d_s].isupper(), "discrete"),
+            "Use “discrete” (separate)")
+
+    # 16. compliment -> complement (each other / one another)
+    for m in _COMPLIMENT_TO_COMPLEMENT_RE.finditer(text):
+        c_s, c_e = m.start(1), m.end(1)
+        add(c_s, c_e, _apply_case(text[c_s].isupper(), "complement"),
+            "Use “complement” (completes)")
+
+    # 17. stationary -> stationery (office-supplies frame)
+    for m in _STATIONARY_TO_STATIONERY_RE.finditer(text):
+        s_s, s_e = m.start(1), m.end(1)
+        nxt = re.match(r"\s*(\w+)", text[s_e:])
+        prev_hit = _trigger_within(text, s_s, _STATIONERY_PRECEDERS)
+        next_hit = bool(nxt and nxt.group(1).lower() in _STATIONERY_FOLLOWERS)
+        if not (prev_hit or next_hit):
+            continue
+        add(s_s, s_e, _apply_case(text[s_s].isupper(), "stationery"),
+            "Use “stationery” (paper/office supplies)")
+
+    # 18. elicit -> illicit (DET elicit + illegal-goods noun)
+    for m in _ELICIT_TO_ILLICIT_RE.finditer(text):
+        e_s, e_e = m.start(1), m.end(1)
+        add(e_s, e_e, _apply_case(text[e_s].isupper(), "illicit"),
+            "Use “illicit” (illegal)")
+
+    # 19. allusion -> illusion ("under the allusion")
+    for m in _ALLUSION_TO_ILLUSION_RE.finditer(text):
+        a_s, a_e = m.start(1), m.end(1)
+        add(a_s, a_e, _apply_case(text[a_s].isupper(), "illusion"),
+            "Use “illusion” (false impression)")
+
+    # 20. council -> counsel (seek/need-advice frame)
+    for m in _COUNCIL_TO_COUNSEL_RE.finditer(text):
+        c_s, c_e = m.start(1), m.end(1)
+        prev = re.search(r"(\w+)\s*$", text[:c_s])
+        if not (prev and prev.group(1).lower() in _COUNSEL_PRECEDERS):
+            continue
+        add(c_s, c_e, _apply_case(text[c_s].isupper(), "counsel"),
+            "Use “counsel” (advice)")
+
+    # 21. envelop -> envelope (DET envelop, bare noun position)
+    for m in _ENVELOP_TO_ENVELOPE_RE.finditer(text):
+        e_s, e_e = m.start(1), m.end(1)
+        add(e_s, e_e, _apply_case(text[e_s].isupper(), "envelope"),
+            "Use “envelope” (noun)")
+
+    # 22. breath -> breathe (modal/infinitive precedes it)
+    for m in _BREATH_RE.finditer(text):
+        b_s, b_e = m.start(1), m.end(1)
+        prev = re.search(r"([\w']+)\s*$", text[:b_s])
+        if not (prev and prev.group(1).lower() in _BREATHE_PRECEDERS):
+            continue
+        add(b_s, b_e, _apply_case(text[b_s].isupper(), "breathe"),
+            "Use “breathe” (verb)")
+
+    # 23. loose -> lose (modal/infinitive precedes it)
+    for m in _LOOSE_RE.finditer(text):
+        l_s, l_e = m.start(1), m.end(1)
+        prev = re.search(r"([\w']+)\s*$", text[:l_s])
+        if not (prev and prev.group(1).lower() in _LOSE_PRECEDERS):
+            continue
+        add(l_s, l_e, _apply_case(text[l_s].isupper(), "lose"),
+            "Use “lose” (verb)")
+
+    # 24. quiet -> quite (a few/bit/lot/while frame)
+    for m in _QUIET_TO_QUITE_RE.finditer(text):
+        q_s, q_e = m.start(1), m.end(1)
+        add(q_s, q_e, _apply_case(text[q_s].isupper(), "quite"),
+            "Use “quite” (rather)")
+
+    # 25. moral -> morale (group noun + state word)
+    for m in _MORAL_TO_MORALE_RE.finditer(text):
+        m_s, m_e = m.start(1), m.end(1)
+        add(m_s, m_e, _apply_case(text[m_s].isupper(), "morale"),
+            "Use “morale” (spirit/confidence)")
+
+    # 26. pray -> prey ("fall(s)/fell/falling pray")
+    for m in _PRAY_TO_PREY_RE.finditer(text):
+        p_s, p_e = m.start(1), m.end(1)
+        add(p_s, p_e, _apply_case(text[p_s].isupper(), "prey"),
+            "Use “prey” (victim)")
+
+    # 27. peak -> peek ("take/have/sneak/get/give a peak")
+    for m in _PEAK_TO_PEEK_RE.finditer(text):
+        p_s, p_e = m.start(1), m.end(1)
+        add(p_s, p_e, _apply_case(text[p_s].isupper(), "peek"),
+            "Use “peek” (quick look)")
+
+    # 28. waist -> waste ("a waist of time/money/...")
+    for m in _WAIST_TO_WASTE_RE.finditer(text):
+        w_s, w_e = m.start(1), m.end(1)
+        add(w_s, w_e, _apply_case(text[w_s].isupper(), "waste"),
+            "Use “waste” (squander)")
+
+    # 29. hangar -> hanger (clothing noun precedes it)
+    for m in _HANGAR_RE.finditer(text):
+        h_s, h_e = m.start(1), m.end(1)
+        if not _trigger_within(text, h_s, _HANGER_PRECEDERS):
+            continue
+        add(h_s, h_e, _apply_case(text[h_s].isupper(), "hanger"),
+            "Use “hanger” (for clothes)")
+
+    # 30. tenant -> tenet (core/founding-belief frame)
+    for m in _TENANT_TO_TENET_RE.finditer(text):
+        t_s, t_e = m.start(1), m.end(1)
+        add(t_s, t_e, _apply_case(text[t_s].isupper(), "tenet"),
+            "Use “tenet” (belief)")
+
+    # 31. corral -> coral ("corral reef(s)")
+    for m in _CORRAL_TO_CORAL_RE.finditer(text):
+        c_s, c_e = m.start(1), m.end(1)
+        add(c_s, c_e, _apply_case(text[c_s].isupper(), "coral"),
+            "Use “coral” (reef)")
+
+    # 32. untied -> united (States/Kingdom/Nations follows)
+    for m in _UNTIED_TO_UNITED_RE.finditer(text):
+        u_s, u_e = m.start(1), m.end(1)
+        add(u_s, u_e, _apply_case(text[u_s].isupper(), "united"),
+            "Use “united” (proper noun)")
+
+    # 33. bale -> able (not followed by "of")
+    for m in _BALE_TO_ABLE_RE.finditer(text):
+        b_s, b_e = m.start(1), m.end(1)
+        add(b_s, b_e, _apply_case(text[b_s].isupper(), "able"),
+            "Use “able” (capable)")
+
+    # 34. currant -> current (common current-only context follows)
+    for m in _CURRANT_TO_CURRENT_RE.finditer(text):
+        c_s, c_e = m.start(1), m.end(1)
+        add(c_s, c_e, _apply_case(text[c_s].isupper(), "current"),
+            "Use “current” (present)")
+
+    # 35. manger -> manager (workplace-role frame)
+    for m in _MANGER_TO_MANAGER_RE.finditer(text):
+        m_s, m_e = m.start(1), m.end(1)
+        add(m_s, m_e, _apply_case(text[m_s].isupper(), "manager"),
+            "Use “manager” (role)")
 
     return out
 

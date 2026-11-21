@@ -11,7 +11,7 @@
     </Settings>
 
     <SaveLocation
-        PackagePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\installer-output\Comprsly.msix"
+        PackagePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\installer-output\ComprslyStore.msix"
         TemplatePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\msix-conversion-template-generated.xml" />
 
     <Installer
@@ -24,7 +24,7 @@
         PackageDisplayName="Comprsly"
         PublisherName="CN=378CB613-F751-4D4F-AF9C-EF97524D7367"
         PublisherDisplayName="Comprsly"
-        Version="0.9.82.0">
+        Version="1.0.2.0">
 
         <Applications>
             <Application

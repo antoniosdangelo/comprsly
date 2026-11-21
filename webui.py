@@ -178,7 +178,6 @@ class Bridge:
         } for c in app.APP_CATEGORIES]
         return {
             "version": app.APP_VERSION,
-            "launch_on_login": app.launch_on_login_is_active(),
             "ai_enabled": bool(s.get("ai_enabled")),
             "categories": cats,
             "model": self.get_model(),
@@ -277,11 +276,30 @@ class Bridge:
                 pass
         return True
 
-    def set_launch(self, on):
-        ok = app.set_launch_on_login(bool(on))
-        if ok:
-            self.set_setting("launch_on_login", bool(on))
-        return app.launch_on_login_is_active()
+    # set_launch removed (real ask 2026-07-30, Antonio: the "Launch on
+    # login" toggle doesn't work on the Store/MSIX download). Root cause:
+    # a packaged build routes through Windows.ApplicationModel.StartupTask
+    # (see app.set_launch_on_login), which only works if a matching
+    # <desktop:StartupTask TaskId="ComprslyStartupTask"> extension is
+    # declared in the packaging project's AppxManifest.xml -- a packaging
+    # step outside this codebase that was apparently never added, so the
+    # call silently fails on every Store install. Rather than chase that
+    # manifest, the toggle itself is gone. app.set_launch_on_login /
+    # launch_on_login_is_active / heal_launch_on_login stay in main.py
+    # untouched -- they're still what keeps autostart working for anyone
+    # on the older unpackaged (Inno Setup) install who already turned it
+    # on before this toggle disappeared.
+
+    # ---- update check (real ask 2026-07-28) ----
+    def get_update_status(self):
+        return app.check_for_update()
+
+    def start_update(self):
+        return app.start_store_update()
+
+    # ---- "you're now updated" one-time notice (real ask 2026-07-30) ----
+    def get_version_status(self):
+        return app.consume_version_update_flag()
 
     # ---- model actions ----
     def download_model(self):
@@ -469,6 +487,28 @@ class Bridge:
         try:
             import webbrowser
             webbrowser.open("https://comprsly.com")
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def report_issue(self):
+        """Opens a pre-filled mailto: to contact@comprsly.com (real mail,
+        relays through Resend as of the 2026-07-27 deliverability fix --
+        see Build.md SS10t). Added for Microsoft Store Policy 11.16
+        (generative-AI content needs "a means for users to report
+        inappropriate content to the developer") -- the AI compress
+        feature has never had one until now. Version is pre-filled since
+        it's the first thing support needs and the user would otherwise
+        have to go find it themselves."""
+        try:
+            import urllib.parse
+            import webbrowser
+            subject = urllib.parse.quote(f"Comprsly issue report (v{app.APP_VERSION})")
+            body = urllib.parse.quote(
+                "Describe what happened, and what you expected instead:\n\n\n"
+                f"(App version {app.APP_VERSION} -- feel free to leave this line in)"
+            )
+            webbrowser.open(f"mailto:contact@comprsly.com?subject={subject}&body={body}")
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "error": str(e)}
