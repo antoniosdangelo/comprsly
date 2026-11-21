@@ -11,7 +11,7 @@ One line for a stranger: "It's Grammarly, but instead of just fixing your gramma
 - Windows desktop app: built, working, deployed, now at version 1.0.0. Lead and primary shipped product.
 - Website: comprsly.com, live, running on Cloudflare Workers.
 - Email: contact@comprsly.com working.
-- GitHub repo: github.com/Comprsly/comprsly, MIT licensed, confirmed **private**. Visibility is still Antonio's own open decision, don't assume either way when pitching an "open source" angle.
+- GitHub repo: github.com/antoniosdangelo/comprsly, MIT licensed, confirmed **private**. Visibility is still Antonio's own open decision, don't assume either way when pitching an "open source" angle.
 - **Microsoft Store: submitted, currently In Certification** (Partner Center's own estimate: usually a few hours, up to 3 business days). Store ID `9N8W5HPJ4DHV`. This is no longer "close but blocked", it's actually in Microsoft's review queue — check current status before promoting a specific launch date, it may have passed and gone live, or it may still be pending. No code-signing cost was needed: the Store signs the app automatically and for free on publish.
 - Code signing for the *direct-download* .exe/.msix path (separate from the Store) is still unresolved — that download is unsigned and will trigger Windows SmartScreen warnings for anyone who gets it outside the Store. Given the Store submission is already in motion, the likely right sequencing is to point cold-traffic promotion at the Store listing once it's live, rather than a direct download link, until direct-download signing is separately resolved.
 
