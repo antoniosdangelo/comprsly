@@ -20,7 +20,7 @@ Comprsly makes writing shorter and clearer on Windows. This one repo holds every
 - Full rules: `BRANCHING.md`.
 
 ## First time on a new laptop
-1. `git clone https://github.com/Comprsly/comprsly.git`
+1. `git clone https://github.com/antoniosdangelo/comprsly.git`
 2. `cd comprsly`
 3. `git config core.hooksPath .githooks` (turns on the secret check and the main push guard)
 4. Copy `backend/.dev.vars.example` to `backend/.dev.vars` and fill in the values. Never commit `.dev.vars`.
