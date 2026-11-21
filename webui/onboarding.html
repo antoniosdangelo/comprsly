@@ -54,30 +54,16 @@
       </div>
     </div>
     <div class="step" data-s="2">
-      <div id="s2-choose">
-        <div class="k">One optional add-on</div>
-        <h1>Want prompt compression too?</h1>
-        <div class="sub">Spelling, grammar and punctuation work right now. The AI "make it concise" step is a one-time download, your choice.</div>
-        <div class="choice">
-          <div class="opt rec" data-ai="1"><div class="top"><span class="t">Get the AI</span><span class="tag">Recommended</span></div>
-            <div class="d"><b>One-time ~1 GB download.</b> Unlocks token-saving compression. Runs fully on your device, and you can remove it anytime to free the space.</div></div>
-          <div class="opt" data-ai="0"><div class="top"><span class="t">Start with grammar &amp; spelling</span><span class="tag n">Lightest</span></div>
-            <div class="d">Skip the download. Spelling, grammar &amp; punctuation work immediately. Add the AI later in Settings whenever you want.</div></div>
-        </div>
-        <div class="priv"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg> The download is the only time Comprsly ever uses the network.</div>
-      </div>
-      <!-- Shown instead of the choice above when the installer already
-           fetched the model (see main() in script below): there is nothing
-           left to choose, both features are already ready, asking again
-           would just be a redundant, confusing extra step. -->
-      <div id="s2-already" style="display:none">
-        <div class="k">All set</div>
-        <h1>You're ready to go.</h1>
-        <div class="sub">The AI model finished downloading during setup. Spelling, grammar, punctuation and AI-powered prompt compression are all ready right now, nothing else to do here.</div>
-        <div class="choice">
-          <div class="opt rec" style="cursor:default"><div class="top"><span class="t">Full package installed</span><span class="tag">✓ Ready</span></div>
-            <div class="d">Grammar &amp; spelling, plus AI prompt compression. You can turn any of it off later in Settings if you want.</div></div>
-        </div>
+      <!-- Real ask 2026-07-27: the choice between "get the AI" and "grammar-
+           only" is gone -- the model ships bundled in every install now, so
+           there's nothing left to choose or download. This step is a plain
+           confirmation, not a decision. -->
+      <div class="k">All set</div>
+      <h1>You're ready to go.</h1>
+      <div class="sub">The AI model came bundled with your install. Spelling, grammar, punctuation and AI-powered prompt compression are all ready right now, nothing else to do here.</div>
+      <div class="choice">
+        <div class="opt rec" style="cursor:default"><div class="top"><span class="t">Full package installed</span><span class="tag">✓ Ready</span></div>
+          <div class="d">Grammar &amp; spelling, plus AI prompt compression. You can turn any of it off later in Settings if you want.</div></div>
       </div>
     </div>
   </div>
@@ -91,7 +77,6 @@
   </div>
 <script>
   const api=()=>window.pywebview.api;
-  let modelAlready=false;  // set on load if the wizard already fetched the model -- see below
   function go(s){
     document.querySelectorAll(".step").forEach(x=>x.classList.toggle("on",x.dataset.s==String(s)));
     document.querySelectorAll(".dot").forEach((d,i)=>d.classList.toggle("on",i==(s-1)));
@@ -100,26 +85,9 @@
   }
   document.getElementById("next").onclick=()=>go(2);
   document.getElementById("back").onclick=()=>go(1);
-  // Only the real choice cards (data-ai present) are clickable -- the
-  // "already installed" confirmation card has nothing to choose.
-  document.querySelectorAll(".opt[data-ai]").forEach(o=>o.onclick=()=>{document.querySelectorAll(".opt[data-ai]").forEach(x=>x.classList.remove("rec"));o.classList.add("rec");});
+  // No choice to make anymore (see step 2 above) -- AI is always bundled,
+  // so finishing always means "the full package is enabled."
   document.getElementById("finish").onclick=async()=>{
-    const sel=document.querySelector(".opt[data-ai].rec");
-    const getAI=modelAlready || (sel && sel.dataset.ai==="1");
-    await api().finish_onboarding(!!getAI);
+    await api().finish_onboarding(true);
   };
-  window.addEventListener("pywebviewready", async ()=>{
-    // Real ask 2026-07-24 (Antonio): if the install wizard already fetched
-    // the model, don't turn around and ask "grammar-only or full package?"
-    // on the very next screen -- we already have the full package, so show
-    // a confirmation instead of a redundant, confusing choice.
-    try{
-      const m=await api().get_model();
-      if (m && m.downloaded){
-        modelAlready=true;
-        document.getElementById("s2-choose").style.display="none";
-        document.getElementById("s2-already").style.display="block";
-      }
-    }catch(e){}
-  });
 </script></body></html>

@@ -6,7 +6,7 @@
 ; admin/UAC prompt is needed.
 
 #define MyAppName "Comprsly"
-#define MyAppVersion "0.9.89"
+#define MyAppVersion "1.0.67"
 #define MyAppPublisher "Comprsly"
 ; Renamed from TokenSaver.exe 2026-07-21. The exe file name is what Windows
 ; shows in Task Manager and the taskbar when there's no version resource,
@@ -23,14 +23,22 @@
 ; acceptable trade.
 #define MyAppFolder "Comprsly"
 #define MyLegacyFolder "Compresly"
-; The AI model is NO LONGER bundled (2026-07-22, real ask: "decrease the
-; download size"). It was 974 MB of the ~1 GB installer while the app itself
-; is only ~40 MB. The installer now ships just the app; the model is a
-; one-time in-app download (Settings -> Model -> Download AI model, or the
-; first time "Make it Concise" is used). Spelling/grammar/punctuation work
-; with no model at all, so the install is fully functional immediately; only
-; the optional AI compression needs the ~1 GB download. See
-; local_model.download_model.
+; The AI model IS bundled again (2026-07-27, real ask: "make the store
+; installer the main way to download this, consistently" -- this used to be
+; a separate lean build with the model as an in-app download, and a SEPARATE
+; installer-store.iss that bundled the model just for Microsoft Store
+; certification. Two scripts describing two different installs was exactly
+; the inconsistency being fixed; this is now the ONLY installer, used both
+; for the direct comprsly.com download and as the source the MSIX Packaging
+; Tool captures for the Store, so the two channels can no longer drift apart.
+; The source directory is the model already downloaded on THIS dev machine at
+; build time -- confirmed present, ~975 MB, dominated by model.onnx.data.
+; ModelAlreadyPresent() in [Code] below checks exactly this destination path,
+; so once these [Files] entries land it, the existing post-install download
+; logic (RunModelDownload, kept for parity/safety net) skips itself
+; automatically. See local_model.download_model for the runtime download path
+; this replaces as the primary route.
+#define ModelSourceDir "C:\Users\anton\AppData\Local\Comprsly\model\qwen2.5-1.5b-instruct-int4-cpu"
 
 [Setup]
 AppId={{B4E1F1A0-6C6D-4A1E-9F2A-TOKEN0SAVER1}
@@ -49,19 +57,26 @@ PrivilegesRequired=lowest
 ; really is always {localappdata}\Comprsly — there is no user-chosen custom
 ; path for this to stomp.
 UsePreviousAppDir=no
+; Real bug found 2026-07-27 (MSIX capture): the same constant AppId means
+; Inno also remembers the Start Menu GROUP name from any previous install,
+; the same way it remembered the app dir above. On a machine that once had
+; Token Saver installed, that meant re-installing kept creating shortcuts
+; under "Token Saver" again even though DefaultGroupName says "Comprsly" --
+; confirmed live, two real Start Menu folders both holding working Comprsly
+; shortcuts. UsePreviousGroup=no is the direct counterpart to
+; UsePreviousAppDir=no above; forces the group to always be Comprsly.
+UsePreviousGroup=no
 OutputDir=installer-output
 OutputBaseFilename=ComprslySetup
-; Small payload now that the model isn't bundled, so LZMA + solid is fine
-; and keeps the ~40 MB app installer as small as possible.
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
-; The app is ~40 MB. The optional AI model is downloaded later and needs
-; ~1.2 GB then; require a little headroom now, not the whole model up front.
-ExtraDiskSpaceRequired=120000000
+; No ExtraDiskSpaceRequired needed here -- the model is now one of the
+; [Files] entries below, so Inno already sizes the disk-space check to
+; include it, same reasoning the old installer-store.iss used.
 ; Add/Remove Programs metadata only (the Comments field in Programs and
 ; Features); Inno never shows it inside the wizard itself.
-AppComments=~40 MB app. Spelling/grammar/punctuation work offline right away. The optional AI "Make it Concise" step downloads a ~1 GB model on first use (needs 8 GB RAM, 16 GB recommended).
+AppComments=Comprsly: ~1 GB install, AI "Make it Concise" model included and ready immediately (needs 8 GB RAM, 16 GB recommended). No account, no telemetry; text never leaves this machine.
 ; The onboarding flow, in order: Welcome -> Requirements -> Acknowledgements
 ; -> Preferences -> Install -> Done.
 InfoBeforeFile=ACKNOWLEDGEMENTS.txt
@@ -76,7 +91,7 @@ DisableDirPage=yes
 DisableReadyPage=no
 AppVerName={#MyAppName} {#MyAppVersion}
 VersionInfoDescription=Comprsly setup
-VersionInfoVersion=0.9.89.0
+VersionInfoVersion=1.0.67.0
 ; In-place upgrade support (real ask 2026-07-22): a re-run of setup over an
 ; existing install must replace the locked Comprsly.exe. This is handled by
 ; StopRunningApp() in PrepareToInstall() (a direct taskkill), NOT by Inno's
@@ -114,23 +129,22 @@ FinishedLabel=Setup has finished installing [name] on your computer.%n%nYou can 
 ; rather than settings the user has to go hunting for afterwards.
 Name: "startupicon"; Description: "Start Comprsly when I sign in to Windows"; \
     GroupDescription: "Preferences:"
-; Real bug found live 2026-07-25 (Antonio, on stream): these two descriptions
-; used to carry a second explanatory sentence ("Downloads a ~1 GB model the
-; first time it's used." / "Otherwise it downloads later, on first use.").
-; At ~420-430px they crossed this wizard's task-list wrap width (measured:
-; the desktop-shortcut line below fits at 408px, these wrapped at 417-428px),
-; and Inno Setup's checkbox control has a well-documented rendering glitch
-; where the checkbox glyph clips against a wrapped two-line item. Shortened
-; to single clauses (163px/194px, well under the ~410px threshold) rather
-; than patching the control itself -- the dropped detail is redundant
-; anyway, the very next line already explains the model-download timing.
+; Real bug found live 2026-07-25 (Antonio, on stream): this description used
+; to carry a second explanatory sentence ("Downloads a ~1 GB model the first
+; time it's used."). At ~420-430px it crossed this wizard's task-list wrap
+; width (measured: the desktop-shortcut line below fits at 408px, this
+; wrapped at 417-428px), and Inno Setup's checkbox control has a
+; well-documented rendering glitch where the checkbox glyph clips against a
+; wrapped two-line item. Shortened to a single clause (163px, well under the
+; ~410px threshold) rather than patching the control itself -- moot anyway
+; now that the model ships bundled (see the header note), so there's no
+; download timing left to explain.
 Name: "aienabled"; Description: "Enable AI compression (Step 2)"; \
     GroupDescription: "Preferences:"
-; Optional: fetch the ~1 GB AI model NOW during install instead of on first
-; use. Unchecked by default so the standard install stays fast; the app
-; downloads it later either way. Real ask 2026-07-22.
-Name: "downloadai"; Description: "Download the AI model now (~1 GB)"; \
-    GroupDescription: "Preferences:"; Flags: unchecked
+; No "downloadai" task anymore (real ask 2026-07-27, model bundling
+; consolidation): the model is already bundled in [Files] below, so there's
+; nothing left to optionally fetch post-install -- showing that checkbox
+; would just offer an option that does nothing.
 ; Desktop shortcut, on by default now (real ask 2026-07-22, "add a taskbar
 ; shortcut"). NOTE: modern Windows blocks installers from pinning to the
 ; taskbar programmatically (the taskbarpin verb was removed in Win10), so the
@@ -141,12 +155,15 @@ Name: "desktopicon"; Description: "Create a desktop shortcut (right-click it →
 
 [Files]
 Source: "dist\Comprsly.exe"; DestDir: "{app}"; Flags: ignoreversion
-; The AI model is intentionally NOT bundled anymore (see the header note): it
-; was 974 MB of the old ~1 GB installer. It's fetched in-app on first use of
-; the AI step. Everything else works without it.
 ; Licences and notices travel with the app, which is what Apache 2.0 and the
 ; LGPL both ask for. Also reachable after install, not only during it.
 Source: "ACKNOWLEDGEMENTS.txt"; DestDir: "{app}"; Flags: ignoreversion
+; The AI model is bundled directly (see the header note) so it's ready
+; immediately after install, with no separate download step. Lands exactly
+; where ModelAlreadyPresent() (in [Code] below) checks for it, so the
+; existing skip-the-download logic engages automatically -- no Pascal
+; changes needed.
+Source: "{#ModelSourceDir}\*"; DestDir: "{app}\model\qwen2.5-1.5b-instruct-int4-cpu"; Flags: ignoreversion recursesubdirs
 
 [InstallDelete]
 ; Clear out the pre-rename binary and its Startup shortcut so an upgrade
@@ -156,6 +173,12 @@ Type: files; Name: "{userstartup}\Token Saver.lnk"
 ; And the Startup shortcut that lived in the OLD 'Token Saver' folder, so the
 ; folder rename doesn't leave a login shortcut pointing at a deleted exe.
 Type: files; Name: "{userstartup}\Comprsly.lnk"
+; Real bug found 2026-07-27: the OLD Start Menu GROUP folder itself (see the
+; UsePreviousGroup=no comment above) -- deletes it and its shortcuts on
+; anyone upgrading from back when this app was Token Saver, so they end up
+; with one clean "Comprsly" folder instead of a ghost "Token Saver" one
+; sitting next to it forever.
+Type: filesandordirs; Name: "{userprograms}\Token Saver"
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -316,20 +339,18 @@ begin
       False);
 
   FreeMB := 0;
-  AddCheck(ReqPage, Top, 'Disk: ~40 MB now',
-    'The app is tiny. The optional AI "Make it Concise" model is a one-time ~1 GB download later, only if you use it.',
+  AddCheck(ReqPage, Top, 'Disk: ~1 GB now',
+    'The AI "Make it Concise" model is included in this install and ready immediately -- no separate download needed.',
     True);
 
   AddCheck(ReqPage, Top, 'No account, no telemetry',
-    'Your text never leaves this machine. The only network use is the one-time AI-model download, if you choose to use compression.',
+    'Your text never leaves this machine. Nothing is downloaded after install.',
     True);
 
-  // Progress page used only when "downloadai" is selected (see RunModelDownload,
-  // called from CurStepChanged after the app itself is installed). A plain
-  // TOutputProgressWizardPage, not Inno's own TDownloadWizardPage: the actual
-  // download runs inside Comprsly.exe itself (local_model.download_model),
-  // this page just mirrors its progress -- see the 2026-07-24 note above
-  // RunModelDownload for why.
+  // RunModelDownload below is kept as a parity/safety-net path (e.g. an
+  // upgrade from an old install whose model went missing) -- in the normal
+  // case ModelAlreadyPresent() is already True the moment [Files] finishes
+  // copying, so this page never actually shows.
   ModelDownloadPage := CreateOutputProgressPage(
     'Downloading the AI model',
     'Fetching the ~1 GB model so AI compression is ready immediately. This is optional; you can skip and the app will download it later on first use.');
@@ -413,7 +434,15 @@ var
   StartTicks: Cardinal;
   TimedOut: Boolean;
 begin
-  if not WizardIsTaskSelected('downloadai') then exit;
+  // Real bug found 2026-07-27 (same audit as the onboarding cleanup): this
+  // used to gate on the 'downloadai' task, which no longer exists now that
+  // the model is bundled in [Files] instead of an optional install-time
+  // fetch. Left in place, that gate meant WizardIsTaskSelected always
+  // returned False and this whole procedure silently no-op'd every time --
+  // including the one case it should still cover: the bundle somehow not
+  // landing (interrupted copy, corrupted source). ModelAlreadyPresent()
+  // right below is now the only gate, which is exactly right: nothing to
+  // do when the model's there, a real safety-net download when it isn't.
   if ModelAlreadyPresent() then
   begin
     Log('AI model already present, skipping the post-install download (no duplicate).');
@@ -621,15 +650,11 @@ begin
     SettingsPath := ExpandConstant('{app}\settings.json');
     if not FileExists(SettingsPath) then
     begin
-      // Real gap found 2026-07-24: 'aienabled' and 'downloadai' are two
-      // independent checkboxes, so choosing "download the model now" while
-      // leaving "enable AI compression" at whatever state it's in could
-      // write ai_enabled: false right after successfully installing the
-      // model -- the app would then sit on a fully-downloaded model it
-      // never offers to use. Downloading it now always means AI should be
-      // on; the reverse (aienabled checked, download deferred) is still the
-      // normal, valid "use it, fetch the model on first use" case.
-      if WizardIsTaskSelected('aienabled') or WizardIsTaskSelected('downloadai')
+      // 'downloadai' no longer exists as a separate task (real ask
+      // 2026-07-27: the model is just part of the download now, not an
+      // optional extra checkbox) -- 'aienabled' alone is the only signal
+      // left for whether AI compression should start on.
+      if WizardIsTaskSelected('aienabled')
         then AiVal := 'true' else AiVal := 'false';
       if WizardIsTaskSelected('startupicon') then LoginVal := 'true' else LoginVal := 'false';
       Json := '{"launch_on_login": ' + LoginVal

@@ -38,6 +38,7 @@ import traceback
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
+from tkinter import font as tkfont
 
 # uiautomation loads a native DLL (UIAutomationClient_VC140_*.dll) that needs
 # the Visual C++ 2015+ Redistributable. On this dev machine that's always
@@ -615,7 +616,7 @@ BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 # Displayed in the settings status bar and About. MUST be bumped together
 # with version_info.txt and installer.iss (it drifted to a stale 0.9.4 while
 # those advanced, so the UI lied about the version -- 2026-07-22).
-APP_VERSION = "0.9.92"
+APP_VERSION = "1.0.67"
 
 
 def _heat_color(count):
@@ -1005,6 +1006,12 @@ DEFAULT_SETTINGS = {
     # download in a first-run prompt. Shown once (this flag), only when the
     # model isn't already present. See show_ai_onboarding().
     "ai_onboarding_shown": False,
+    # Real ask 2026-07-30 (Antonio, direct: notify on next login that an
+    # update landed). The last APP_VERSION this install actually showed the
+    # Settings sidebar for -- see consume_version_update_flag(). Blank means
+    # either a fresh install or an existing install from before this flag
+    # existed; either way that's not a real update to announce.
+    "last_seen_version": "",
 }
 
 # --- Where Comprsly works (2026-07-25: LLM-only, reversing the earlier
@@ -1051,6 +1058,31 @@ def save_settings(settings):
             json.dump(settings, f)
     except Exception:
         pass
+
+
+def consume_version_update_flag():
+    """One-time 'Updated to vX.X.X' signal for the Settings sidebar (real ask
+    2026-07-30, Antonio, direct: notify on next login that an update landed;
+    placement is the same sidebar slot as the existing 'Update available'
+    box, see settings.html's .sidebottom). Works for any install path
+    (Store auto-update, a re-run installer, or a manual exe swap) since it
+    only ever compares APP_VERSION to what was last recorded, no Store API
+    involved.
+
+    Consumed, not just read: the stored version is updated to APP_VERSION
+    the moment this is called, so the notice fires exactly once per real
+    version bump and never again for that version, even across many Settings
+    opens. A blank stored value (fresh install, or an existing install from
+    before this flag existed) is recorded silently -- there's no prior
+    version to have "updated" from, so nothing is announced."""
+    s = load_settings()
+    seen = s.get("last_seen_version") or ""
+    if seen != APP_VERSION:
+        s["last_seen_version"] = APP_VERSION
+        save_settings(s)
+        if seen:
+            return {"updated": True, "from": seen, "to": APP_VERSION}
+    return {"updated": False}
 
 
 def load_history():
@@ -1129,6 +1161,79 @@ def _set_launch_on_login_packaged(enabled):
     else:
         task.disable()
     return True
+
+
+_STORE_UPDATE_CHECK_MIN_INTERVAL = 1800  # matches the Store API's own documented rate limit
+_last_store_update_check = [0.0, {"available": False}]
+
+
+def check_for_update():
+    """Real ask 2026-07-28 (Antonio, direct: 'what is the best route the
+    MSIX can be updated'): packaged builds ask the Microsoft Store's own
+    update service -- Windows.Services.Store.StoreContext -- rather than
+    a custom version-check, since it's the officially supported mechanism
+    for exactly this, needs no hosting of our own, and hands off to the
+    Store's own trusted download/install pipeline instead of a self-signed
+    one. Unpackaged (today's Inno Setup .exe) has no equivalent yet -- a
+    separate, still-open piece of work.
+
+    Rate-limited to the Store API's own documented cap (max one real check
+    per 30 minutes, max ten per 24h) -- a repeat call inside that window
+    returns the cached result instead of re-querying, so the Settings
+    window can safely call this every time it opens without ever tripping
+    that limit itself."""
+    if not _is_packaged():
+        return {"available": False}
+    now = time.time()
+    if now - _last_store_update_check[0] < _STORE_UPDATE_CHECK_MIN_INTERVAL:
+        return _last_store_update_check[1]
+    try:
+        from winrt.windows.services.store import StoreContext
+        context = StoreContext.get_default()
+        updates = context.get_app_and_optional_store_package_updates_async().get()
+        result = {"available": len(updates) > 0}
+    except Exception:
+        log_exception("check_for_update")
+        result = {"available": False}
+    _last_store_update_check[0] = now
+    _last_store_update_check[1] = result
+    return result
+
+
+def start_store_update():
+    """Hands off to the Store's own download+install pipeline -- Windows
+    shows its own permission and progress dialogs for the actual transfer,
+    this only kicks it off. Runs on a background thread since the
+    underlying WinRT calls block on .get(), so the Settings window doesn't
+    freeze while the user works through the OS's own prompts.
+
+    Real gap, not yet verified live (2026-07-28): Microsoft's own docs say
+    a Win32 desktop-bridge app must associate the StoreContext with an
+    owner HWND (via IInitializeWithWindow) before calling a method that
+    shows a modal dialog, or it can fail with ERROR_INVALID_WINDOW_HANDLE
+    (0x80070578) -- see the Q&A thread linked in that doc for exactly this
+    symptom. There's no documented Python/pywinrt example of that
+    association step anywhere found, only C#/C++. This call is left
+    without it for now; if it throws that specific error once this is
+    actually tested in a real packaged install, that's the concrete next
+    thing to solve, not something to guess at further here. The check
+    above (get_app_and_optional_store_package_updates_async) shows no UI
+    at all per its own docs, so it isn't affected by this gap."""
+    if not _is_packaged():
+        return {"ok": False, "error": "not a packaged install"}
+
+    def _run():
+        try:
+            from winrt.windows.services.store import StoreContext
+            context = StoreContext.get_default()
+            updates = context.get_app_and_optional_store_package_updates_async().get()
+            if updates:
+                context.request_download_and_install_store_package_updates_async(updates).get()
+        except Exception:
+            log_exception("start_store_update")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True}
 
 
 def set_launch_on_login(enabled):
@@ -1551,6 +1656,187 @@ def _find_ai_cli_descendant(root_pid):
                 queue.append(child)
     return None
 
+
+# Real ask 2026-07-27, pre-market audit (Antonio, direct: paste appears
+# instantly, typing visibly doesn't, "is there any way at all"): researched
+# and verified live in isolated disposable terminal windows, never touching
+# a real session. WriteConsoleInputW writes a whole batch of key events
+# into a target console's input buffer in one atomic call, instead of
+# SendKeys' throttled one-keystroke-at-a-time loop with a sleep between
+# each. Confirmed live: still reads as real keystrokes (doesn't trip Claude
+# Code CLI's bracketed-paste "large paste" dialog / [Pasted text #N]
+# placeholder the way an actual OS clipboard paste does), lands correctly,
+# and a properly-built Ctrl+U-equivalent clears a line with zero residue.
+#
+# The one real gap: this needs a specific process ID to attach its console
+# to (AttachConsole), unlike SendKeys, which just goes wherever OS keyboard
+# focus currently is. A Windows Terminal window's OWN process is never the
+# right PID (it's the pseudoconsole HOST, not the shell reading input) --
+# the actual shell (powershell.exe, cmd.exe, etc.) is a direct CHILD
+# process of it, one per tab/pane. With more than one tab open, there's no
+# supported, reliable way from outside to tell which child belongs to the
+# currently active pane specifically, so _find_unique_terminal_shell_pid
+# below deliberately refuses to guess whenever there's more than one
+# candidate -- same fail-closed-only-when-certain rule as everywhere else
+# in this file.
+TERMINAL_SHELL_PROCESS_NAMES = {
+    "powershell.exe", "pwsh.exe", "cmd.exe", "bash.exe", "wsl.exe", "git.exe",
+}
+
+_KEY_EVENT = 0x0001
+_VK_CONTROL = 0x11
+_VK_U = 0x55
+_LEFT_CTRL_PRESSED = 0x0008
+_GENERIC_READ = 0x80000000
+_GENERIC_WRITE = 0x40000000
+_FILE_SHARE_READ = 0x1
+_FILE_SHARE_WRITE = 0x2
+_OPEN_EXISTING = 3
+
+
+class _ConsoleKeyEventRecord(ctypes.Structure):
+    _fields_ = [
+        ("bKeyDown", wintypes.BOOL),
+        ("wRepeatCount", wintypes.WORD),
+        ("wVirtualKeyCode", wintypes.WORD),
+        ("wVirtualScanCode", wintypes.WORD),
+        ("UnicodeChar", wintypes.WCHAR),
+        ("dwControlKeyState", wintypes.DWORD),
+    ]
+
+
+class _ConsoleInputRecord(ctypes.Structure):
+    _fields_ = [("EventType", wintypes.WORD), ("KeyEvent", _ConsoleKeyEventRecord)]
+
+
+# use_last_error=True and explicit argtypes/restype throughout: handles are
+# 64-bit pointers, and ctypes silently truncating them to a 32-bit int is a
+# known, previously-hit bug class in this exact file (main.py's
+# GWLP_HWNDPARENT fix). Cheap insurance against a wrong handle value here.
+_console_kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_console_kernel32.CreateFileW.argtypes = [
+    wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+    wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE,
+]
+_console_kernel32.CreateFileW.restype = wintypes.HANDLE
+_console_kernel32.WriteConsoleInputW.argtypes = [
+    wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+]
+_console_kernel32.WriteConsoleInputW.restype = wintypes.BOOL
+_console_kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+_console_kernel32.AttachConsole.restype = wintypes.BOOL
+_console_kernel32.FreeConsole.restype = wintypes.BOOL
+
+
+def _find_unique_terminal_shell_pid(hwnd):
+    """The direct child shell process of this terminal window's own
+    process, if there is EXACTLY ONE. Returns None (never a guess) when
+    there's zero or more than one candidate -- see the block comment above
+    for why multiple tabs/panes make this genuinely ambiguous from
+    outside, not just inconvenient to determine."""
+    try:
+        wt_pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wt_pid))
+        if not wt_pid.value:
+            return None
+        snapshot = _process_tree_snapshot()
+        if not snapshot:
+            return None
+        candidates = [
+            pid for pid, (parent_pid, name) in snapshot.items()
+            if parent_pid == wt_pid.value and name in TERMINAL_SHELL_PROCESS_NAMES
+        ]
+        # Real gap found 2026-07-27 (pre-market audit): this used to return
+        # silently on ambiguity, with no way to tell from the log whether
+        # "multiple terminal sessions open" was actually why the fast path
+        # never engages, versus something else going wrong. Windows
+        # Terminal runs as ONE process for every window it owns, not one
+        # process per window, so this candidate count reflects shell
+        # processes across ALL open terminal windows/tabs system-wide, not
+        # just this one -- expected to be >1 whenever more than a single
+        # terminal session is open anywhere, which logging makes visible
+        # instead of silent.
+        if len(candidates) != 1:
+            log(f"_find_unique_terminal_shell_pid: {len(candidates)} candidate(s), declining (need exactly 1)")
+            return None
+        return candidates[0]
+    except Exception:
+        log_exception("_find_unique_terminal_shell_pid")
+        return None
+
+
+def _console_key_record(vk, ch, down, ctrl_state=0):
+    rec = _ConsoleInputRecord()
+    rec.EventType = _KEY_EVENT
+    rec.KeyEvent.bKeyDown = down
+    rec.KeyEvent.wRepeatCount = 1
+    rec.KeyEvent.wVirtualKeyCode = vk
+    rec.KeyEvent.wVirtualScanCode = 0
+    rec.KeyEvent.UnicodeChar = ch
+    rec.KeyEvent.dwControlKeyState = ctrl_state
+    return rec
+
+
+def _console_text_records(text):
+    """Plain character key events, VK=0 -- verified live 2026-07-27: real
+    console input processing still accepts and inserts these as literal
+    text even without a matching virtual-key code."""
+    records = []
+    for ch in text:
+        records.append(_console_key_record(0, ch, True))
+        records.append(_console_key_record(0, ch, False))
+    return records
+
+
+def _console_ctrl_u_records():
+    """A correctly-built Ctrl+U: VK_CONTROL down, then 'U' down carrying
+    both the LEFT_CTRL_PRESSED state flag AND the real ASCII control code
+    (0x15) as UnicodeChar, then both up in reverse -- mirrors what a real
+    keyboard produces for this combo. Verified live 2026-07-27 in an
+    isolated disposable Claude Code CLI window: fully cleared a real typed
+    line with zero residue, same as SendKeys' Ctrl+U does today."""
+    return [
+        _console_key_record(_VK_CONTROL, "\x00", True, _LEFT_CTRL_PRESSED),
+        _console_key_record(_VK_U, "\x15", True, _LEFT_CTRL_PRESSED),
+        _console_key_record(_VK_U, "\x15", False, _LEFT_CTRL_PRESSED),
+        _console_key_record(_VK_CONTROL, "\x00", False, 0),
+    ]
+
+
+def _write_console_records(pid, records):
+    """Attaches to pid's console, writes a whole batch of key events in
+    one atomic call (no artificial per-key delay, unlike SendKeys),
+    detaches cleanly afterward either way. Returns True only if the
+    console was reached AND every record was accepted -- any failure means
+    the caller should treat this as if nothing happened and fall back to
+    the proven SendKeys mechanism, not retry this path.
+
+    Real bug found live 2026-07-27 (isolated testing): this process may
+    already be attached to a console inherited from whatever launched it;
+    AttachConsole fails with ERROR_ACCESS_DENIED unless FreeConsole runs
+    first, since a process can only be attached to one console at a time."""
+    try:
+        _console_kernel32.FreeConsole()
+        if not _console_kernel32.AttachConsole(pid):
+            return False
+        try:
+            h_in = _console_kernel32.CreateFileW(
+                "CONIN$", _GENERIC_READ | _GENERIC_WRITE,
+                _FILE_SHARE_READ | _FILE_SHARE_WRITE, None, _OPEN_EXISTING, 0, None,
+            )
+            if not h_in or h_in == wintypes.HANDLE(-1).value:
+                return False
+            arr = (_ConsoleInputRecord * len(records))(*records)
+            written = wintypes.DWORD(0)
+            ok = _console_kernel32.WriteConsoleInputW(h_in, arr, len(records), ctypes.byref(written))
+            return bool(ok) and written.value == len(records)
+        finally:
+            _console_kernel32.FreeConsole()
+    except Exception:
+        log_exception("_write_console_records")
+        return False
+
+
 # Real gap found 2026-07-25, from Antonio's own debug.log: right after
 # "browser tab mentions 'Claude' but it isn't the page itself, staying
 # inactive" the very next lines show the focused control's own name as
@@ -1643,6 +1929,68 @@ def _domain_label_for(hwnd, title):
     label = _llm_domain_match(_read_omnibox_url(hwnd))
     _domain_match_cache[key] = label
     return label
+
+
+# Chrome/Edge side panels (2026-07-30) -- a side panel is a docked WebUI
+# pane that never repaints the outer tab's title or address bar, so
+# neither _llm_title_match nor _domain_label_for can ever catch it, no
+# matter how the hint/domain lists are tuned (both read signals a side
+# panel structurally doesn't touch). Confirmed live in a real debug.log:
+# the Gemini side panel's own focused control reported
+# Name='Gemini Chrome :: New Conversation' on two separate occasions, a
+# few minutes apart, while the underlying tab's title stayed 'New Tab'
+# the whole time -- exactly the gap the "unrecognized browser tab" +
+# ancestor-walk diagnostic (see its 2026-07-25 comment) was logging in
+# wait of. A control's accessible NAME is a different kind of signal
+# than a window title or a URL, so this is its own check, not folded
+# into either existing one.
+KNOWN_SIDE_PANEL_NAME_PREFIXES = {
+    "Gemini Chrome ::": "Gemini",
+}
+
+
+def _side_panel_label_for(hwnd):
+    """Whichever known side panel is currently focused, by its content's
+    own accessible Name, or None. Only ever consulted after both the title
+    and domain checks already came up empty (see app_label_for) -- a side
+    panel's docked pane sits alongside a real tab, so this must not run
+    first and shadow an actual full-tab match.
+
+    Real bug found live 2026-08-03 (Antonio, screenshot + a live UIA
+    diagnostic run while he had the real composer focused): this only
+    checked the immediately-focused control's OWN Name, which is
+    'Gemini Chrome :: <conversation title>' while the message thread/
+    document area has focus, but becomes something else entirely (e.g.
+    'Enter a prompt for Gemini') the instant focus moves into the actual
+    textarea -- exactly the moment someone is about to type. The prefixed
+    Name is still there, just one or more ancestors up, so this now walks
+    up looking for it instead of only ever checking the single deepest
+    element, the same ancestor-walk pattern every other detector in this
+    file already uses for exactly this reason.
+
+    CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Ok lock it it works
+    that was amazing"). Do not retune the ancestor-walk depth or the
+    prefix matching without a new real ask."""
+    try:
+        node = auto.GetFocusedControl()
+    except Exception:
+        return None
+    for _ in range(15):
+        if node is None:
+            return None
+        try:
+            name = node.Name
+        except Exception:
+            name = None
+        if name:
+            for prefix, label in KNOWN_SIDE_PANEL_NAME_PREFIXES.items():
+                if name.startswith(prefix):
+                    return label
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return None
+    return None
 
 
 # A same-day search-engine right-anchor feature (SEARCH_ENGINE_TITLE_HINTS /
@@ -1767,6 +2115,12 @@ def app_label_for(process_name, hwnd):
         # before giving up, check what site the address bar actually says
         # this is -- a signal an SPA's document.title can't hide.
         label = _domain_label_for(hwnd, title)
+        if label is not None:
+            return label
+        # Neither the title nor the URL can see INTO a docked side panel
+        # (see KNOWN_SIDE_PANEL_NAME_PREFIXES) -- last resort before giving
+        # up on this browser tab entirely.
+        label = _side_panel_label_for(hwnd)
         if label is not None:
             return label
         # Migration breadcrumb for the stricter matcher: name WHICH hint
@@ -1900,12 +2254,34 @@ SWP_NOSIZE = 0x0001
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
+# GetWindowLongPtrW/SetWindowLongPtrW index for a window's real Win32 owner.
+# Distinct from Tk's own .transient() -- see make_window_non_activating below.
+GWLP_HWNDPARENT = -8
 
 
-def make_window_non_activating(tk_window):
+def make_window_non_activating(tk_window, owner=None):
     """Marks a Tk window WS_EX_NOACTIVATE so clicking it never steals
     keyboard focus from the app underneath (Claude's input box), and
     WS_EX_TOOLWINDOW so it doesn't get its own taskbar button.
+
+    Real ask 2026-07-27: WS_EX_TOOLWINDOW alone still shows a taskbar button
+    on some configs (see the 2026-07-26 note further down) -- Windows only
+    fully suppresses the button when the window ALSO has a real Win32 owner.
+    Only pass `owner` for windows that must NEVER show in the taskbar (the
+    badge and the suggestion popup). Never pass it for a real app window like
+    Settings, which should keep its normal taskbar icon when opened -- this
+    function's other caller-less behavior is unaffected either way since
+    `owner` defaults to None.
+
+    A prior attempt to supply that owner via Tk's own .transient() was
+    reverted (see PersistentBadge._ensure_window and SuggestionPopup's window
+    build): Tk's transient() does more than set the raw owner, it also
+    auto-withdraws the child whenever the owner is withdrawn, and the owner
+    here (the app's hidden Tk root) is PERMANENTLY withdrawn, so the popup
+    never showed at all. Setting GWLP_HWNDPARENT directly via
+    SetWindowLongPtrW bypasses that Tk-level bookkeeping entirely -- it's a
+    raw Win32 attribute Tk's Python wrapper has no hooks into, so the owner
+    can stay withdrawn without the child being forced to follow it.
 
     Real root-cause bug found 2026-07-20: this MUST run after the window is
     realized. Before realization GetParent() returns 0, and
@@ -1925,16 +2301,29 @@ def make_window_non_activating(tk_window):
     MSDN documents as required for an EXSTYLE change to actually take
     effect on a window that already exists (SetWindowLongPtr changes the
     stored style bits, but doesn't by itself make Windows re-decide
-    anything about the window's frame/taskbar presence). Paired with the
-    caller now also giving the window a real owner via .transient() --
-    together these are the two actual documented conditions for a tool
-    window to never get a taskbar button, not just look different once it
-    has one."""
+    anything about the window's frame/taskbar presence). The real owner
+    (2026-07-27, see `owner` param above) is the other of the two actual
+    documented conditions for a tool window to never get a taskbar button,
+    not just look different once it has one."""
     tk_window.update_idletasks()
     hwnd = ctypes.windll.user32.GetParent(tk_window.winfo_id()) or tk_window.winfo_id()
     style = ctypes.windll.user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
     style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
     ctypes.windll.user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
+    if owner is not None:
+        try:
+            # Explicit argtypes/restype -- same reasoning as the SetWindowPos
+            # call below: GWLP_HWNDPARENT's value is a full HWND, exactly the
+            # kind of pointer-sized value ctypes' default int guessing has
+            # silently truncated in this project before.
+            user32 = ctypes.windll.user32
+            user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_void_p]
+            user32.SetWindowLongPtrW.restype = ctypes.c_void_p
+            owner.update_idletasks()
+            owner_hwnd = ctypes.windll.user32.GetParent(owner.winfo_id()) or owner.winfo_id()
+            user32.SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, owner_hwnd)
+        except Exception:
+            log_exception("make_window_non_activating: SetWindowLongPtrW GWLP_HWNDPARENT")
     try:
         # Explicit argtypes/restype, not left to ctypes' default guessing --
         # a different SetWindowPos call elsewhere in this app's history was
@@ -2964,6 +3353,65 @@ def restore_field_focus(target_hwnd, target_control, expected_old_text):
     landed = force_foreground(target_hwnd)
     if is_terminal_target:
         if landed:
+            # Real new finding 2026-07-27 (pre-launch audit, "one final
+            # bottleneck"): the tab-name check below confirmed BOTH the good
+            # and the stuck reads belonged to the SAME tab (identical
+            # original_len, identical tab name) -- this was never a
+            # cross-tab mixup. The remaining theory: Windows Terminal's own
+            # accessibility view of that tab occasionally snaps to an OLDER
+            # SCROLL POSITION instead of the true bottom, right around when
+            # our own popup takes focus, and the read then reflects whatever
+            # was scrolled into view, not the live prompt. Ctrl+End is
+            # Windows Terminal's own built-in "scroll to bottom" action (a
+            # terminal-level keybind, not passed through to the running
+            # shell/CLI), sent here BEFORE any read so every check below is
+            # looking at the true live position. A no-op if already at the
+            # bottom, which is the common case.
+            auto.SendKeys("{Ctrl}{END}", waitTime=0.01)
+            time.sleep(0.05)
+            # Real gap found 2026-07-27 (Antonio, pre-launch audit, multi-tab
+            # terminal testing): force_foreground only proves SOME window
+            # came forward, it does not by itself prove it's still the same
+            # one suggestions were computed against.
+            #
+            # REVERTED same day (attempt 1): tried a UIA RuntimeId identity
+            # check here. Live testing showed target_id == current_id every
+            # time, even across what were genuinely different tabs/windows --
+            # this API doesn't distinguish them, so the check was a no-op.
+            #
+            # REVERTED same day (attempt 2): tried relying only on
+            # apply_new_text's fresh content-tail check instead. A live
+            # diagnostic dump then caught the actual mechanism directly: the
+            # "stuck" content wasn't stale scrollback at all, it was
+            # completely real, live text -- from a DIFFERENT terminal window
+            # entirely (confirmed in the raw dump, that window's own name was
+            # sitting right there in its border row). With multiple terminal
+            # windows open, whatever GetFocusedControl() returns right after
+            # force_foreground can belong to a different window than
+            # target_hwnd, and its real content can easily still pass a
+            # content-tail check by coincidence or bad luck.
+            #
+            # Real fix: check the one thing that's actually unambiguous --
+            # does the currently-focused control's OWNING WINDOW
+            # (_owning_hwnd_for_control, already used by get_focused_text's
+            # own terminal-detection) match target_hwnd at all. Not identity
+            # within a window, not content -- literally "is this even the
+            # same top-level window we mean to type into." Only a DEFINITE
+            # mismatch (both resolve cleanly and differ) refuses; anything
+            # unreadable falls back to trusting force_foreground, same fail-
+            # closed-only-when-certain discipline as everywhere else here.
+            try:
+                current_control = auto.GetFocusedControl()
+                current_owner = _owning_hwnd_for_control(current_control) if current_control is not None else None
+                mismatch = current_owner is not None and current_owner != target_hwnd
+                diag = f"target_hwnd={target_hwnd} current_owner={current_owner} mismatch={mismatch}"
+            except Exception as e:
+                mismatch = False
+                diag = f"EXCEPTION during check: {e!r}"
+            log(f"restore_field_focus (terminal): window-identity check: {diag}")
+            if mismatch:
+                log("restore_field_focus (terminal): focus is on a DIFFERENT terminal window than suggestion-time, refusing to select-all")
+                return False
             log("restore_field_focus (terminal): trusting force_foreground, no text re-check needed")
             return True
         log("restore_field_focus (terminal): force_foreground did not land on target, refusing to select-all")
@@ -3025,7 +3473,8 @@ def _sendkeys_escape(text):
 
 
 def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
-                   target_control=None, expected_old_text=None, safe_write_only=False):
+                   target_control=None, expected_old_text=None, safe_write_only=False,
+                   expected_tab_name=None):
     """Writes a suggestion's rewritten text back into whatever box currently
     has real OS focus, same select-all + paste mechanism as the read
     fallback, just in reverse: paste the new text onto the clipboard, select
@@ -3164,6 +3613,59 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
         # cursor deliberately moved mid-line first.
         if _process_name_for_hwnd(target_hwnd) in TERMINAL_HOST_PROCESSES:
             old_len = len(expected_old_text) if expected_old_text else 0
+
+            # Real bug found live 2026-07-27 (Antonio direct repro: "right
+            # as it's about to paste the new text in, it doesn't, and
+            # restarts the typing"): the post-type verification below used
+            # to take exactly ONE read immediately after SendKeys finished
+            # the whole string, no settle time at all. The terminal's own
+            # render can briefly lag right after a burst of synthetic
+            # input -- already proven and documented on the READ side
+            # earlier in this same function -- and a long rewrite makes
+            # that gap more likely, not less. An instant read landing mid-
+            # render read as "verified != yes" and triggered the retry
+            # (clear + retype), which is exactly what looked like the new
+            # text getting typed and then visibly restarted from scratch.
+            # A few quick re-reads with a short settle delay, same pattern
+            # already used for the pre-clear check above, before declaring
+            # a real failure and paying that visible cost.
+            def _verify_landed(expected_tail):
+                text = None
+                for _ in range(4):
+                    text, _ = get_focused_text()
+                    if text is not None and expected_tail and expected_tail in text:
+                        return "yes", text
+                    time.sleep(0.15)
+                return ("unreadable" if text is None else "NO"), text
+
+            # Real ask 2026-07-27 (Antonio, pre-market audit: "is there any
+            # way at all" to make terminal Apply feel instant like a paste,
+            # without reintroducing the bracketed-paste bug real paste
+            # triggers): tried first, ahead of the proven SendKeys path
+            # below. Only attempted when the target PID is unambiguous (see
+            # _find_unique_terminal_shell_pid); on ANY failure or ambiguity
+            # this falls through to the untouched, already-proven SendKeys
+            # code below rather than retry or partially commit -- nothing
+            # above this point has touched the console yet, so falling
+            # through here starts the existing mechanism from exactly the
+            # same place it always has.
+            fast_pid = _find_unique_terminal_shell_pid(target_hwnd)
+            if fast_pid is not None:
+                fast_cleared = (not old_len) or _write_console_records(fast_pid, _console_ctrl_u_records())
+                fast_typed = fast_cleared and _write_console_records(fast_pid, _console_text_records(new_text))
+                if fast_typed:
+                    fast_tail = _text_tail(new_text)
+                    fast_verified, _ = _verify_landed(fast_tail)
+                    log(f"apply_new_text (terminal): fast console path attempted, verified={fast_verified}")
+                    if fast_verified == "yes":
+                        set_typed_buffer(new_text)
+                        if dismiss_after:
+                            popup.dismiss()
+                        return True
+                    log("apply_new_text (terminal): fast console path typed but didn't verify, "
+                        "falling back to SendKeys (its own Ctrl+U will clear this first)")
+                else:
+                    log("apply_new_text (terminal): fast console path write failed, falling back to SendKeys")
             # Real ask 2026-07-26 (Antonio, direct: select-and-delete the
             # existing text like a mouse selection would, not one backspace
             # per character). Home moves to the start of the current input
@@ -3204,7 +3706,72 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
                         "Apply again.",
                     )
                     return False
+                # Real fix 2026-07-27 (pre-launch audit, the actual root
+                # cause behind the terminal tab-switch bug): a live
+                # diagnostic dump caught this directly -- Windows Terminal's
+                # tabs all share one hwnd, and proved to share the same UIA
+                # RuntimeId and owning-window too, so none of those can tell
+                # a tab switch apart from staying put. The tab's own NAME is
+                # rendered directly into its border row, right before the
+                # marker (confirmed live: "...2nd Venture Assistant--[marker]"),
+                # which IS distinct per tab. Checked here, before touching
+                # anything, regardless of old_len -- an empty box in the
+                # WRONG tab is exactly as unsafe to type into as a full one.
+                # Unreadable (None) on either side falls back to proceeding,
+                # same fail-closed-only-when-certain rule as everywhere else;
+                # only a definite, both-sides-readable mismatch refuses.
+                if expected_tab_name:
+                    get_focused_text()  # refresh _last_terminal_tab_name for the CURRENT read
+                    current_tab_name = _last_terminal_tab_name[0]
+                    if current_tab_name and current_tab_name != expected_tab_name:
+                        log(f"apply_new_text (terminal): ABORTED, active tab changed since suggestion-time "
+                            f"(was {expected_tab_name!r}, now {current_tab_name!r}), refusing to clear/type")
+                        popup.show_error(
+                            *popup.last_position(),
+                            "Comprsly noticed you've switched to a different terminal tab, so it left "
+                            "that one untouched.\n\nClick back into the original tab and press Apply "
+                            "again.",
+                        )
+                        return False
                 if old_len:
+                    # Real bug found live 2026-07-27 (pre-launch audit,
+                    # confirmed via a live diagnostic run directly against the
+                    # real running terminal): right at this exact moment --
+                    # freshly regaining foreground -- the terminal's own
+                    # rendering can briefly lag, and a read taken right here
+                    # can land on an OLDER, already-painted exchange instead
+                    # of the live input line. Confirmed directly: the
+                    # "leftover" text a failed clear reported was, verbatim,
+                    # something said earlier in the conversation, not
+                    # anything just typed. Unlike the CLI-busy-for-a-long-
+                    # time case (the whole screen is frozen there, so the old
+                    # input line's content still matches what was analysed,
+                    # and this correctly passes), a wrong-exchange read won't
+                    # match the tail of what was actually analysed. A few
+                    # quick retries (fractions of a second, nothing like the
+                    # tens-of-seconds CLI-busy case the marker-based focus
+                    # check was removed for) give the rendering a chance to
+                    # catch up; if it still doesn't match, abort rather than
+                    # clear-and-type into content that was never the live
+                    # input to begin with.
+                    expected_tail = _text_tail(expected_old_text)
+                    if expected_tail:
+                        for verify_attempt in range(3):
+                            fresh_text, _ = get_focused_text()
+                            if fresh_text is not None and expected_tail in fresh_text:
+                                break
+                            time.sleep(0.1)
+                        else:
+                            log("apply_new_text (terminal): ABORTED, fresh read before clearing didn't "
+                                "match the analysed text (stale render or content changed), refusing "
+                                "to clear/type")
+                            popup.show_error(
+                                *popup.last_position(),
+                                "Comprsly couldn't confirm your terminal input still matches what it "
+                                "analysed, so it left it untouched.\n\nClick back into the box and "
+                                "press Apply again.",
+                            )
+                            return False
                     # Real ask 2026-07-26 (Antonio, direct: backspacing is
                     # unappealing, wants instant delete-and-replace like
                     # the browser/app versions already have). Ctrl+U
@@ -3272,16 +3839,86 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
                     # still cannot hang Apply for long (worst case
                     # ~5s, and only ever reached if something is
                     # genuinely stuck, not in normal use).
+                    # Real bug found live 2026-07-27 (same session, later
+                    # still: Antonio direct repro, "the apply button isn't
+                    # doing anything"): this loop used to call
+                    # get_focused_text() BETWEEN every single Ctrl+U press
+                    # to check for early-exit. Timed directly against the
+                    # real terminal in this exact session: a single
+                    # get_focused_text() call on a large scrollback buffer
+                    # took 2-3 REAL SECONDS (UI Automation's TextPattern
+                    # read is genuinely slow at that size, not a logic
+                    # bug), so an 8-attempt loop spent up to ~20+ seconds
+                    # just re-reading the buffer between keystrokes, not
+                    # actually failing to clear anything. That's almost
+                    # certainly why Apply looked like it was doing nothing
+                    # -- it was still running, burning the clock on
+                    # verification reads the loop never needed per-press
+                    # in the first place. Fixed by sending the whole
+                    # Ctrl+U burst first with no read in between (each
+                    # press itself is cheap, and an extra press on an
+                    # already-clear line is harmless, per this file's own
+                    # established reasoning), then doing exactly ONE
+                    # verification read afterward -- the existing
+                    # pre_type/confirmed_cleared check right below already
+                    # covers safety, it doesn't need a read after every
+                    # single keystroke to do that job.
+                    # Real bug found live 2026-07-27 (Antonio direct repro,
+                    # pre-launch reliability pass): this used to be a single
+                    # burst-then-check. Debug.log showed the burst
+                    # occasionally lands zero effect at all (field reads the
+                    # exact same length after 8 presses as before them),
+                    # which looks like the keystrokes missing the input
+                    # control that one time rather than Ctrl+U genuinely not
+                    # working -- a timing thing, not a logic bug. Retrying
+                    # the whole burst a couple more times before giving up
+                    # only adds patience; it does NOT touch the "trust
+                    # force_foreground, no marker re-check" rule Antonio
+                    # locked in above, so it can't reintroduce that bug.
                     estimated_rows = old_len // CHARS_PER_LINE_GUESS + 1
                     clear_attempts = min(max(estimated_rows * 2, 8), 60)
-                    for _ in range(clear_attempts):
-                        auto.SendKeys("{Ctrl}u", waitTime=0.01)
-                        time.sleep(0.08)
-                        remaining, _ = get_focused_text()
-                        if remaining is not None and len(remaining) <= 1:
+                    max_clear_rounds = 3
+                    pre_type = None
+                    for round_num in range(1, max_clear_rounds + 1):
+                        for _ in range(clear_attempts):
+                            auto.SendKeys("{Ctrl}u", waitTime=0.01)
+                            time.sleep(0.03)
+                        time.sleep(0.1)
+                        # Real bug found live 2026-07-27 (pre-launch audit,
+                        # multi-tab testing): original_len in the log
+                        # correctly matched the right tab's own buffer every
+                        # time this "stuck" -- it was grabbing an OLDER
+                        # exchange from within that SAME buffer, not a
+                        # different tab's. That means Ctrl+U may well have
+                        # already worked; the VERIFICATION READ was the
+                        # unreliable part, occasionally landing on the wrong
+                        # spot in the buffer's history for one call. A second
+                        # quick read here, trusted if it shows empty even
+                        # when the first didn't, is cheap insurance against
+                        # exactly that -- it changes nothing about how many
+                        # Ctrl+U presses get sent, only how the result gets
+                        # checked.
+                        pre_type, _ = get_focused_text()
+                        if pre_type is not None and len(pre_type) > 1:
+                            time.sleep(0.05)
+                            retry_type, _ = get_focused_text()
+                            if retry_type is not None and len(retry_type) <= 1:
+                                pre_type = retry_type
+                        if pre_type is not None and len(pre_type) <= 1:
                             break
-                    time.sleep(0.1)
-                    pre_type, _ = get_focused_text()
+                        if round_num < max_clear_rounds:
+                            # Diagnostic 2026-07-27 (pre-launch audit, live
+                            # repro: field plateaus at a nonzero length
+                            # instead of reaching empty, same number every
+                            # round) -- logging the actual leftover TEXT, not
+                            # just its length, to tell apart "Ctrl+U only
+                            # kills the current line of a multi-line prompt"
+                            # from any other cause. Antonio's own debug.log,
+                            # never sent anywhere.
+                            log(f"apply_new_text (terminal): clear round {round_num} "
+                                f"did not confirm empty (len={len(pre_type) if pre_type else 'unreadable'}), "
+                                f"leftover={pre_type!r}, retrying")
+                            _dump_terminal_diagnostic(f"clear round {round_num} stuck")
                     log(f"apply_new_text (terminal): about to type, field reads len={len(pre_type) if pre_type else 0} right before")
 
                     # Real bug found live 2026-07-27 (same session,
@@ -3309,16 +3946,29 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
                     # write on top of whatever is actually there.
                     confirmed_cleared = pre_type is not None and len(pre_type) <= 1
                     if not confirmed_cleared:
-                        state_desc = "unreadable" if pre_type is None else f"still has {len(pre_type)} chars"
-                        log(f"apply_new_text (terminal): ABORTED, could not confirm the field was cleared before typing ({state_desc})")
-                        popup.show_error(
-                            *popup.last_position(),
-                            "Comprsly could not confirm your terminal input was fully "
-                            "cleared, so it left it untouched rather than risk typing "
-                            "over it.\n\nPlease clear the input line yourself and try "
-                            "again.",
-                        )
-                        return False
+                        # Real finding 2026-07-27 (post-launch-audit dump
+                        # analysis): every "stuck" case caught by
+                        # _dump_terminal_diagnostic showed the SAME
+                        # byte-for-byte content across many separate Apply
+                        # attempts spanning up to 20 minutes, real Ctrl+U
+                        # keystrokes and all -- proving this pre-type
+                        # "verify empty" READ is the unreliable half of the
+                        # equation, not necessarily the clearing itself.
+                        # Aborting here on an unreliable read is why Apply
+                        # looked completely dead: it never even reached the
+                        # typing step. Instead of trusting this read as a
+                        # gate, proceed to type anyway (best effort) and
+                        # let the ALREADY-EXISTING post-type verification
+                        # below -- which checks the one thing that actually
+                        # matters, whether the new text is really in the
+                        # buffer afterward -- be the real safety net. Worst
+                        # case if this read genuinely was right and the
+                        # field wasn't clear: new text lands next to old
+                        # content, a visibly garbled but recoverable line,
+                        # not silent data loss and not a dead button.
+                        state_desc = "unreadable" if pre_type is None else f"still has {len(pre_type)} chars, leftover={pre_type!r}"
+                        log(f"apply_new_text (terminal): could not confirm the field was cleared before typing "
+                            f"({state_desc}), proceeding anyway -- post-type verification below is the real gate")
                 # Second bracketing re-check, right before the single
                 # most consequential action (typing the actual replacement
                 # text) -- see the matching checkpoint above the clearing
@@ -3338,21 +3988,73 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
             finally:
                 _self_injecting[0] = False
             set_typed_buffer(new_text)
-            landed_text, _ = get_focused_text()
             tail = _text_tail(new_text)
-            if landed_text is None:
-                verified = "unreadable"
-            elif tail and tail in landed_text:
-                verified = "yes"
-            else:
-                verified = "NO"
-            if dismiss_after:
-                popup.dismiss()
+            verified, landed_text = _verify_landed(tail)
             log(
                 f"applied via terminal keystroke-typing (no clipboard/paste), "
-                f"new text length={len(new_text)}, dismiss_after={dismiss_after}, "
-                f"paste_landed={verified}"
+                f"new text length={len(new_text)}, paste_landed={verified}"
             )
+            # Real change 2026-07-27 (same audit as the pre-type gate
+            # removal above): this used to be logged and ignored, Apply
+            # unconditionally returned True regardless of what verified
+            # said. This is now the actual safety gate -- it checks the one
+            # thing that matters (did the new text really land) instead of
+            # a pre-type "is it empty" read that kept proving unreliable.
+            # One retry of the whole clear+type before giving up, since a
+            # single miss is more likely a timing blip than a hard failure.
+            if verified != "yes":
+                log("apply_new_text (terminal): first attempt did not verify, retrying clear+type once")
+                # Audit fix 2026-07-27 (same change as above): the same
+                # bracketing foreground-drift check used before the first
+                # attempt applies here too -- this retry can run a couple
+                # seconds after the first, plenty of time for alt-tab/click-
+                # away, and without this check a drifted focus would send
+                # Ctrl+U and the new text into whatever window the user is
+                # now actually looking at instead of aborting.
+                if ctypes.windll.user32.GetForegroundWindow() != target_hwnd:
+                    log("apply_new_text (terminal): ABORTED, foreground window changed before retry")
+                    popup.show_error(
+                        *popup.last_position(),
+                        "Comprsly lost track of your terminal window before it could retry, "
+                        "so it left it untouched.\n\nClick back into the box and press Apply "
+                        "again.",
+                    )
+                    return False
+                # Audit fix 2026-07-27: the first attempt's Ctrl+U burst and
+                # retype run under _self_injecting[0]=True (set at the top of
+                # this whole block, cleared in the finally right after the
+                # first SendKeys) so _low_level_keyboard_proc doesn't mistake
+                # our own injected keystrokes for external input (dictation,
+                # another tool) and mark the typed buffer untrusted. This
+                # retry runs AFTER that finally already reset the flag to
+                # False, so without re-setting it here, every Ctrl+U press
+                # below would trip that exact false positive.
+                _self_injecting[0] = True
+                try:
+                    # old_len can be 0 (field was already empty, no
+                    # clear_attempts computed above) -- fall back to a sane
+                    # default rather than referencing a variable that was
+                    # never set in that path.
+                    retry_clear_attempts = clear_attempts if old_len else 8
+                    for _ in range(retry_clear_attempts):
+                        auto.SendKeys("{Ctrl}u", waitTime=0.01)
+                        time.sleep(0.03)
+                    time.sleep(0.1)
+                    auto.SendKeys(_sendkeys_escape(new_text), waitTime=0.01)
+                finally:
+                    _self_injecting[0] = False
+                set_typed_buffer(new_text)
+                verified, landed_text = _verify_landed(tail)
+                log(f"apply_new_text (terminal): retry verification result: {verified}")
+            if verified != "yes":
+                popup.show_error(
+                    *popup.last_position(),
+                    "Comprsly typed your revision but couldn't confirm it landed "
+                    "correctly.\n\nPlease check the terminal line before continuing.",
+                )
+                return False
+            if dismiss_after:
+                popup.dismiss()
             return True
 
         # Full-format snapshot, not just text (2026-07-22 market audit): a
@@ -3667,10 +4369,15 @@ def _log_terminal_extraction(text_pattern):
     watch_loop) so it covers every get_focused_text() caller, including
     Apply's own fresh capture, not just the analysis tick.
 
-    2026-07-27: now takes the LIVE TextPattern object, not a pre-
-    flattened string -- see _extract_terminal_input_line's docstring
-    and the comment above MAX_TERMINAL_WRAPPED_ROWS for why (real UIA
-    line-unit navigation replaced string.split("\n"))."""
+    2026-07-27, twice: first changed to take the LIVE TextPattern object
+    instead of a pre-flattened string (fixed a real "\n unreliable" bug),
+    then _extract_terminal_input_line was rewritten AGAIN the same day to
+    do its actual work via regex over the string instead of further UIA
+    calls (fixed a real multi-second-per-call performance bug the first
+    rewrite introduced) -- see that function's own docstring for the full
+    story. Still takes the pattern object here only so this call site can
+    get `doc` for the one cheap GetText(-1) read; nothing downstream does
+    further range navigation on it anymore."""
     try:
         doc = text_pattern.DocumentRange
         original_text = doc.GetText(-1)
@@ -3690,71 +4397,132 @@ def _log_terminal_extraction(text_pattern):
     return extracted
 
 
-def _extract_terminal_input_line(doc_range, full_text):
-    """Best-effort isolation of just the CLI's current input line, using
-    real UIA line-unit navigation on doc_range (a live
-    TextPattern.DocumentRange) rather than splitting full_text on "\n"
-    -- see the 2026-07-27 comment above MAX_TERMINAL_WRAPPED_ROWS for the
-    full live-diagnostic finding this replaces. full_text is used only to
-    locate the marker character's offset; all structural navigation from
-    there is done via range operations against doc_range itself, so it
-    works correctly whether or not full_text happens to contain any
-    newline characters.
+_BORDER_RUN_RE = re.compile("\u2500{10,}")
+# Real find 2026-07-27 (pre-launch audit): the one signal that actually
+# tells Windows Terminal tabs apart -- see _extract_terminal_input_line,
+# which populates this on every successful extraction.
+_last_terminal_tab_name = [None]
+# Generous allowance for the status line(s) that sit between the top
+# border and the marker (see the "border, status line, marker, border"
+# structure documented above). A few hundred characters comfortably
+# covers a couple of wrapped status rows without being loose enough to
+# match some unrelated border seen far earlier in scrollback.
+_TERMINAL_TOP_BORDER_MAX_GAP = 500
 
-    Endpoint values 0/1 below are UIA's own TextPatternRangeEndpoint
-    Start/End (standard COM enum, confirmed live via the diagnostic
-    session -- not guessed)."""
+
+def _extract_terminal_input_line(doc_range, full_text):
+    """Best-effort isolation of just the CLI's current input line.
+
+    2026-07-27, rewritten again, same day: the previous version (real
+    UIA line-unit navigation via Move(TextUnit.Line, ...) on doc_range)
+    was built to fix a genuine bug -- full_text doesn't reliably contain
+    "\\n"/"\\r" at all, so naive string splitting silently saw the whole
+    buffer as one line. That fix was correct but had a real, separately
+    confirmed cost: timed live against this exact machine's terminal,
+    EACH individual TextPatternRange navigation call (Move, or
+    MoveEndpointByUnit by either a small or a large offset -- both
+    measured, both cost the same) took roughly 0.5-1 real second, a
+    fixed per-call cost, not proportional to distance moved. A typical
+    extraction needing 4-8 such calls (position the marker, check the
+    border above, walk forward a few rows to the border below) added up
+    to the ~3-7 second Apply/suggestion delays Antonio reported.
+
+    The actual insight that fixes both problems at once: line boundaries
+    were never the real requirement. The border rows are made of U+2500
+    characters, a distinct, searchable PATTERN, not a line concept -- so
+    finding them is a plain regex search over full_text (already fetched
+    by ONE fast GetText(-1) call, confirmed live at ~0.001s regardless of
+    buffer size), needing zero further UIA calls at all. This is immune
+    to the original "\\n unreliable" bug for the same reason line-unit
+    navigation was: it never assumes newlines exist either, doc_range is
+    kept as a parameter for API-compatibility with existing callers but
+    is no longer used here.
+
+    Confirms "border, marker, border" the same way the line-based version
+    did (a top border within _TERMINAL_TOP_BORDER_MAX_GAP characters
+    before the marker, a bottom border found by searching forward),
+    fails closed (returns None) exactly where the old version did: no
+    marker, no nearby top border, or no bottom border found within the
+    search cap."""
     if not full_text:
         return None
     marker_pos = full_text.rfind("\u276f")
     if marker_pos == -1:
         return None
 
+    # Nearest border run BEFORE the marker must be close enough to be the
+    # box's own top border, not some unrelated border seen earlier in
+    # scrollback -- same guarantee the old "is the line above a border"
+    # check gave, expressed as a proximity search instead.
+    top_border = None
+    for m in _BORDER_RUN_RE.finditer(full_text, 0, marker_pos):
+        top_border = m
+    if top_border is None or (marker_pos - top_border.end()) > _TERMINAL_TOP_BORDER_MAX_GAP:
+        return None
+
+    # Real find 2026-07-27 (pre-launch audit, live diagnostic dump): Windows
+    # Terminal's tabs all share one hwnd AND, it turns out, the SAME UIA
+    # RuntimeId and owning-window through every check tried -- but the tab's
+    # own NAME is rendered directly into this exact border row, right before
+    # the marker (confirmed live: "... 2nd Venture Assistant --[marker]").
+    # That's the one signal that actually differs between tabs. Cached here
+    # (not returned -- every existing caller of this function keeps working
+    # unchanged) so callers that specifically need tab identity can read it
+    # via _last_terminal_tab_name right after calling this.
+    _last_terminal_tab_name[0] = full_text[top_border.end():marker_pos].strip(" ─")
+
+    # Bottom border: nearest run of border characters after the marker,
+    # within a generous search window. Character-based equivalent of the
+    # old MAX_TERMINAL_WRAPPED_ROWS row cap, using the same
+    # CHARS_PER_LINE_GUESS estimate already relied on elsewhere in this
+    # file (badge positioning, the Ctrl+U clear-attempt scaling);
+    # computed here rather than as a module-level constant since
+    # CHARS_PER_LINE_GUESS is defined later in the file.
+    tail_search_cap = MAX_TERMINAL_WRAPPED_ROWS * CHARS_PER_LINE_GUESS
+    search_end = min(len(full_text), marker_pos + 1 + tail_search_cap)
+    bottom_border = _BORDER_RUN_RE.search(full_text, marker_pos + 1, search_end)
+    if bottom_border is None:
+        return None
+
+    content = full_text[marker_pos + 1:bottom_border.start()]
+    return " ".join(content.split())
+
+
+def _dump_terminal_diagnostic(reason):
+    """Diagnostic only (pre-launch audit, 2026-07-27): writes the CURRENT
+    focused control's raw full_text plus exactly where the marker/border
+    match landed to a separate local file, never sent anywhere, so a live
+    repro of the "stuck on old content" bug can be inspected directly
+    instead of guessed at. Called only from the terminal apply path's own
+    stuck-detection, never during normal use."""
     try:
-        marker_line = doc_range.Clone()
-        marker_line.MoveEndpointByRange(0, doc_range, 0)
-        marker_line.MoveEndpointByUnit(0, auto.TextUnit.Character, marker_pos)
-        marker_line.MoveEndpointByRange(1, marker_line, 0)
-        marker_line.ExpandToEnclosingUnit(auto.TextUnit.Line)
-        marker_line_text = marker_line.GetText(-1)
-    except Exception:
-        return None
-
-    marker_line_stripped = marker_line_text.lstrip()
-    if not marker_line_stripped.startswith("\u276f"):
-        # The rightmost marker character in the buffer isn't at the
-        # start of its own visual line -- it's not the live input row
-        # (e.g. it appears mid-sentence somewhere in scrollback), not
-        # usable as the current-input anchor.
-        return None
-
-    # Real input marker only counts when the line directly above it is a
-    # real border row (confirmed live structure: border, marker, border).
-    try:
-        top = marker_line.Clone()
-        if top.Move(auto.TextUnit.Line, -1) == 0:
-            return None
-        if not _is_terminal_border_line(top.GetText(-1)):
-            return None
-    except Exception:
-        return None
-
-    # Collect the marker's own (possibly multi-row-wrapped) content,
-    # walking forward line by line until the bottom border.
-    collected = [marker_line_stripped[1:].strip()]
-    try:
-        cur = marker_line.Clone()
-        for _ in range(MAX_TERMINAL_WRAPPED_ROWS):
-            if cur.Move(auto.TextUnit.Line, 1) == 0:
-                break
-            row_text = cur.GetText(-1)
-            if _is_terminal_border_line(row_text):
-                break
-            collected.append(row_text.strip())
-    except Exception:
-        return None
-
-    return " ".join(s for s in collected if s)
+        control = auto.GetFocusedControl()
+        if control is None:
+            return
+        text_pattern = control.GetPattern(PatternId.TextPattern)
+        if text_pattern is None:
+            return
+        full_text = text_pattern.DocumentRange.GetText(-1)
+        marker_pos = full_text.rfind("❯") if full_text else -1
+        top_border = None
+        if full_text and marker_pos != -1:
+            for m in _BORDER_RUN_RE.finditer(full_text, 0, marker_pos):
+                top_border = m
+        bottom_border = None
+        if full_text and marker_pos != -1:
+            tail_search_cap = MAX_TERMINAL_WRAPPED_ROWS * CHARS_PER_LINE_GUESS
+            search_end = min(len(full_text), marker_pos + 1 + tail_search_cap)
+            bottom_border = _BORDER_RUN_RE.search(full_text, marker_pos + 1, search_end)
+        path = os.path.join(os.environ.get("LOCALAPPDATA", "."), "Comprsly", "terminal_diagnostic_dump.txt")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(f"\n=== {reason} @ {time.strftime('%H:%M:%S')} ===\n")
+            f.write(f"full_text length: {len(full_text) if full_text else 0}\n")
+            f.write(f"marker_pos: {marker_pos}\n")
+            f.write(f"top_border: {(top_border.start(), top_border.end()) if top_border else None}\n")
+            f.write(f"bottom_border: {(bottom_border.start(), bottom_border.end()) if bottom_border else None}\n")
+            f.write(f"RAW FULL TEXT:\n{full_text!r}\n")
+    except Exception as e:
+        log_exception(f"_dump_terminal_diagnostic: {e!r}")
 
 
 # Small inset from the box's OWN right edge, not a floating gap outside it
@@ -3778,18 +4546,500 @@ def _extract_terminal_input_line(doc_range, full_text):
 # badge's own outline.
 BADGE_INSIDE_INSET = S(16)
 
+# Real bug found live 2026-07-30 (Antonio, screenshot: ChatGPT Classic desktop
+# app -- badge landing directly in the toolbar row, at/on the submit button).
+# Root cause: BADGE_WIDEN_RIGHT_SITES widens ChatGPT's detected right edge
+# out to the true visual edge of its inline toolbar (mic, submit button),
+# then the badge docks BADGE_INSIDE_INSET in from that widened edge. The
+# default 16px inset clears Gemini's toolbar fine but isn't enough room on
+# ChatGPT's, so it lands on the rightmost element there, the submit button.
+# Per-site override on top of the base inset, same "each site gets its own
+# explicit slot" philosophy as BADGE_WIDEN_RIGHT_SITES, not a universal
+# formula. FIRST-PASS ESTIMATE from the screenshot's proportions, not a
+# live pixel measurement (this environment can't see the real floating
+# badge, see PersistentBadge._position_for) -- expect to retune once
+# confirmed live against the real running app.
+#
+# "Claude Code" added 2026-07-31 (Antonio, live: "move the code badge to
+# the right please, just a little bit"). This site's badge always goes
+# through the plain right-edge inset (its TermControl rect always spans
+# the full pane width, no toolbar-cluster detection applies to a
+# terminal) -- SMALLER inset here means closer to the pane's right edge,
+# i.e. further right. 16 -> 6. CONFIRMED CORRECT (Antonio, live, direct:
+# "Claude is good now mark that correct... LOCK ALL CLAUDE PARTS NO MORE
+# FIXING") -- this covers all three Claude surfaces (plain chat via
+# BADGE_TOOLBAR_GAP_OVERRIDES above, Cowork/inline-Send via
+# CLAUDE_INLINE_SEND_EXTRA_GAP, and this terminal inset).
+# Reopened 2026-08-03 (Antonio, live, direct, by name: "the terminal badge
+# placement is amazing but... the badge should just move to the left
+# horizontally 1 badge space left" -- an explicit, by-name ask, the only
+# thing that authorizes touching this path, see the permanently-scoped
+# terminal block further down in this file). LARGER inset = further from
+# the pane's right edge = further left. 6 -> 6 + one full design badge
+# width (58).
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Lock this, that is
+# perfect"). Do not retune without a new, explicit, by-name ask about the
+# terminal/CLI specifically -- see this file's permanently-scoped terminal
+# block further down for why a general "fix the badge" ask never
+# authorizes touching this constant on its own.
+BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56), "Claude Code": S(6 + DESIGN_BADGE_SIZE)}
+
+# Gap between the badge's right edge and the real toolbar control it's
+# docking against once _toolbar_cluster_left finds one (2026-07-30). Small
+# and fixed on purpose -- this is "distance from the very next control," a
+# different, much smaller problem than BADGE_INSIDE_INSET's "distance from
+# a plain box edge," so it deliberately doesn't reuse that constant.
+BADGE_TOOLBAR_GAP = S(10)
+
+# Real bug found live 2026-07-30 (Antonio, several screenshots, same spot
+# every time): on Claude specifically, the badge kept landing ON TOP of
+# "Opus 4.8" -- the model name -- instead of before it, even after
+# _walk_toolbar_children was widened from an allowlist to a denylist (see
+# _TOOLBAR_WRAPPER_TYPES) to catch plain text labels too. Root cause,
+# confirmed via the candidate-dump diagnostic (see _toolbar_cluster_left /
+# _below_toolbar_cluster_left's own "candidates:" log line): Claude's
+# accessibility tree exposes exactly two ButtonControls in that row (the
+# effort dropdown and the mic) and NOTHING for "Opus 4.8" at all -- not
+# missing because of a control-type filter, missing because the text
+# itself carries no accessible role UIA can see, so no amount of widening
+# the type filter can ever find it. The nearest real, detectable control
+# (the effort dropdown) is the best anchor available; this adds extra
+# clearance past BADGE_TOOLBAR_GAP on top of it so the badge lands before
+# the invisible-to-UIA label too, not just before the button after it.
+# Retuned six times: 70 -> 90 -> 130 -> 190 -> 210 -> 240 (2026-07-30/31).
+# CONFIRMED CORRECT at 240 at the time (Antonio, live, direct: "IT IS
+# PERFECT LOCK IT"). This override is PLAIN-CHAT-ONLY (Claude's "Opus
+# 4.8"/"Sonnet 5" layout). Never applied to the Cowork/inline-Send layout,
+# see CLAUDE_INLINE_SEND_EXTRA_GAP.
+# Reopened 2026-08-02 (Antonio, screenshot, live: badge needs to move
+# right more -- confirmed this IS the plain-chat layout, "Chat" selected
+# not "Cowork", so this is the right constant to touch, not the Cowork
+# one). 240 -> 120 overshot: confirmed via a further screenshot the badge
+# landed ON TOP of the "Sonnet 5" label text itself (covering the "So").
+# 170 STILL overlapped ("S" hidden this time) -- three straight guesses
+# by eye all missed, so stopped guessing and measured the real page
+# directly (claude-in-chrome, getBoundingClientRect on the actual
+# elements) instead of a fourth screenshot-based estimate. Real numbers:
+# the detected anchor (toolbar_left) lands on the Send button cluster at
+# x=1397, NOT the model-picker label itself, which starts at x=1194 --
+# a real gap of 203px is required just to clear the label's own left
+# edge, which is why every value below ~200 (120, 170) landed inside the
+# text. 240's old margin (250 total) was ~47px of clearance past that;
+# 210 keeps it close as asked while staying past the measured threshold.
+# Also confirmed live in the same session: Chat and Cowork's toolbars
+# render at IDENTICAL coordinates in the common case, so this single
+# corrected value covers both, not just plain chat. Confirmed again
+# 2026-08-02 after the below-row/inline-send priority swap (see
+# _claude_inline_send_button's own call site): this is now the value that
+# governs Claude's PLAIN CHAT layout AND Cowork's common (non-deep-task)
+# state, both routed through the same below-row detector -- only a true
+# Cowork/project task view with nothing findable below-row falls through
+# to CLAUDE_INLINE_SEND_EXTRA_GAP below.
+# Reverted 2026-08-03: a 210 -> 190 change here was a misread of a "move it
+# right" ask that was actually about the Code/"Accept edits" review
+# composer (see CLAUDE_CODE_REVIEW_GAP), not this plain-chat/Cowork path.
+# Antonio, direct: "i didnt ask you to do that on the claude chat i asked
+# you to do that on the claude code not the chat version." Back to 210,
+# untouched.
+# Real bug found live 2026-08-03 (Antonio, screenshot: the bottom, real-
+# conversation composer -- box (793,497,1429,602), the SAME one 210 was
+# originally calibrated against -- badge landing right after "+" instead
+# of near "Sonnet 5"). Root cause: a SIDE EFFECT of the below_toolbar_
+# cluster_left row-selection fix shipped earlier tonight (the one that
+# stops accepting a row until it's confirmed to have real candidates).
+# That fix reaches a fuller ancestor than the old code ever did, and that
+# ancestor's subtree now exposes "Sonnet 5" itself as a real ButtonControl
+# at x=1194 -- confirmed via debug.log candidates dump: this exact
+# composer used to report only [(1397,...)], now reports [(1194,...),
+# (1357,...),(1357,...),(1397,...)]. 1194 exactly matches the label's real
+# left edge measured live back when this constant was first tuned ("the
+# model-picker label itself... starts at x=1194"), which was undetectable
+# by UIA at the time -- so it was never truly invisible, just unreachable
+# by the old, narrower row match. 210 was built to jump PAST that
+# invisible label from a distant Send-button anchor; now that the label
+# itself is the anchor, that entire premise is gone. Small buffer instead.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "It is now fixed you can
+# lock the (claude cowork/chat) no reason to mess with it anymore"). This
+# covers both the bottom/deep-conversation composer AND the Home/Cowork
+# composer's own fallback -- see CLAUDE_HOME_ROW_GAP for the latter's
+# separate, already-locked override. Do not retune without a new real ask.
+BADGE_TOOLBAR_GAP_OVERRIDES = {"Claude": S(8)}
+
+# Real ask 2026-08-03 (Antonio, screenshot: Perplexity's Computer/task
+# composer, badge overlapping "Orchestrator" -- see
+# _perplexity_long_model_row's own comment for why this is scoped to that
+# specific label, not a blanket Perplexity override). Move left ~2
+# badge-widths, as asked.
+# Retuned 2026-08-03 (Antonio, live, right after: "You should move it to
+# the right just a little bit more please"). Smaller gap = further right.
+# 2x -> 1.7x badge-widths.
+# Retuned 2026-08-03 (Antonio, live, right after: "Another badge length to
+# the right please"). 1.7x -> 0.7x badge-widths.
+#
+# Superseded 2026-08-03 -- see PERPLEXITY_COMPUTER_ANCHOR_GAP and
+# _perplexity_computer_anchor below. This gap was measured against the
+# OLD anchor (the "Model" button, whose real text width UIA can't see at
+# all), so it was always going to need retuning again for the next long
+# name that showed up. Kept defined (still referenced by the fallback
+# path below if the new Computer anchor isn't found for some reason) but
+# no longer the primary dial.
+PERPLEXITY_LONG_MODEL_GAP = S(0.7 * DESIGN_BADGE_SIZE)
+
+# Small fixed buffer past the "Computer" button's own right edge -- see
+# _perplexity_computer_anchor's docstring for why this button (not the
+# variable-width "Model" one) is the stable, name-length-independent
+# anchor. Same small-buffer magnitude as every other "real, precisely-
+# located button" case in this file (e.g. BADGE_TOOLBAR_GAP itself).
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Ok that looks good now
+# make sure you lock perplexity now please" -- confirmed via debug.log
+# showing computer_right=1023 firing correctly). This covers the
+# Computer/Orchestrator task composer; the plain search composer is
+# covered separately with zero override, see BADGE_TOOLBAR_BELOW_SITES's
+# own Perplexity lock note. Do not retune without a new real ask.
+PERPLEXITY_COMPUTER_ANCHOR_GAP = S(10)
+
+# Extra clearance for the Cowork/project layout's inline Send button (see
+# _claude_inline_send_button), used ONLY as a fallback since the 2026-08-02
+# priority swap -- see that call site's own comment for why. Separate from
+# BADGE_TOOLBAR_GAP_OVERRIDES above on purpose: this one is its own dial so
+# tuning it can never move the (now much more commonly hit) plain-chat/
+# common-Cowork path above. Real ask 2026-07-30 (Antonio, live, right after the
+# inline-Send fix shipped: "cowork/chat is in the wrong spot needing to be
+# more left" -- explicitly NOT the plain-chat layout). FIRST-PASS estimate,
+# expect to retune again once confirmed live.
+# Retuned 2026-08-02 (Antonio, screenshot, live: badge correct area but
+# needs to move right a bit more, Cowork/chat only -- Claude Code's
+# terminal badge is separately locked, see BADGE_INSIDE_INSET_OVERRIDES's
+# own comment, and is untouched by this constant). Smaller gap = badge
+# sits closer to the Send button = further right. 40 -> 20.
+# Retuned again same day: 20 still read as basically unmoved to Antonio
+# ("didn't move it to the correct position"), explicitly asked for a
+# bigger jump this time, toward the "Opus 4.8" label specifically. Cut to
+# 0 -- Cowork now gets the SAME base gap as every other toolbar-anchored
+# badge (BADGE_TOOLBAR_GAP alone), no extra Cowork-specific clearance on
+# top of it.
+# Retuned again same day, after the real _claude_inline_send_button
+# scoping bug (see that function's own comment) was fixed and this value
+# could finally be judged on Cowork alone, not contaminated by plain
+# chat: Antonio asked for a further move right, specifically "two badge
+# lengths." bx = toolbar_left - gap - BADGE_ICON_SIZE, so this needs to
+# go NEGATIVE (gap subtracted -> a negative gap ADDS) by 2x the badge
+# diameter. Deliberately NOT run through S(): that helper floors at 1,
+# which would silently discard a negative value entirely. Same
+# UI_SCALE math S() itself uses, just without the floor.
+# Retuned again 2026-08-02: after the below-row/inline-send priority
+# swap, this path is now only reached for a genuine deep Cowork/project
+# task view (see the call site's comment), not the common case anymore.
+# Antonio asked for one more full badge-length move right on that
+# screenshot. -2x -> -3x the badge diameter.
+CLAUDE_INLINE_SEND_EXTRA_GAP = -int(round(3 * DESIGN_BADGE_SIZE * UI_SCALE))
+
+# Real bug found live 2026-08-03 (Antonio, screenshot: badge floating
+# alone in dead space in the middle of the toolbar row, not tucked
+# against either the "Accept edits" cluster or the "Sonnet 5"/"High"
+# cluster). This is claude.ai/code's diff-review composer (Claude
+# proposed a code change, showing "Accept edits" instead of a normal
+# Send button) -- it routes through the same below-row detector as
+# plain chat/Cowork and lands on a similarly-positioned anchor
+# (toolbar_left=1397 in both, confirmed via debug.log), so it was
+# incorrectly sharing BADGE_TOOLBAR_GAP_OVERRIDES["Claude"] (210px,
+# tuned to clear a real Send button PLUS an invisible-to-UIA label in
+# the plain-chat layout). This composer has no Send button at all
+# (Enter submits) and its own invisible-to-UIA label ("Sonnet 5") sits
+# much closer to the detected anchor. Confirmed via a live
+# claude.ai/code reproduction (getBoundingClientRect): "Sonnet 5"
+# starts at x=1358.7, the UIA anchor lands at x=1397 -- only ~38px
+# apart, not 203. This dial only governs that narrower gap, detected
+# via _claude_code_review_row's "Accept edits" check so it never
+# touches the plain-chat/Cowork path above.
+# Retuned 2026-08-03 (Antonio, direct: move THIS one right, not the
+# plain-chat one -- see the correction on BADGE_TOOLBAR_GAP_OVERRIDES
+# above). Real ceiling here, not a free dial: the measured anchor-to-
+# label distance is only ~38px (1397 - 1358.7), so anything below ~40
+# starts covering "Sonnet 5" text again, the exact failure this
+# constant was created to fix. 50 -> 42, close to that floor with a
+# small buffer left.
+# Real bug found live 2026-08-03 (Antonio, screenshot: "Auto" state,
+# badge landing on the "asasas" text line instead of the toolbar row).
+# Same side-effect root cause as BADGE_TOOLBAR_GAP_OVERRIDES's own
+# 2026-08-03 note: the below_toolbar_cluster_left row-selection fix now
+# reaches a fuller ancestor, exposing "Sonnet 5" itself as a real
+# ButtonControl (confirmed via debug.log: this composer's candidates now
+# include (1193,...), where before only a single distant anchor showed
+# up). The whole "~38px, not 203px" premise above was ALREADY the small-
+# gap case; this just tightens it further now that the anchor is the
+# label itself, not a nearby-but-still-separate button. 42 -> 8, matching
+# the plain-chat fix's same small buffer.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Claude works well. Lock
+# all of them please" -- covers both the "Accept edits" and "Auto"
+# states). Do not retune without a new real ask.
+CLAUDE_CODE_REVIEW_GAP = S(8)
+
+# Real bug found live 2026-08-03 (Antonio, screenshot: Home "How can I
+# help you today?" composer, badge landing right after the "Cowork"
+# toggle instead of near "Sonnet 5"/"Opus 4.8"). Same root issue as
+# CLAUDE_CODE_REVIEW_GAP just above -- see _claude_home_row's own
+# docstring for the live measurement (anchor ~1237 vs model button left
+# ~1225, not 200px+ apart). Starting from the same measured ballpark as
+# the Code-review case since both anchor directly on/near the model
+# button rather than a distant Send button; expect to retune once
+# confirmed live.
+# Retuned 2026-08-03 (Antonio, live, right after shipping: "move it to the
+# right a little more please like another badge size to the right, only
+# on the center screen chat box"). Goes negative on purpose past this
+# point -- same "subtract past zero -> push right of the anchor itself"
+# trick as CLAUDE_INLINE_SEND_EXTRA_GAP, so deliberately NOT run through
+# S() (that helper floors at 1, which would silently discard the negative
+# part). 45 -> one badge-width further right.
+# Retuned 2026-08-03 (Antonio, live, right after: "move over to the left
+# just a little more another half of a badge space over"). One full
+# badge-width right was a slight overshoot -- pull back half a badge.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "lock the center (claude
+# cowork/chat) chatbox please the way you set it up is great"). Do not
+# retune this, is_home_row, or _claude_home_row's "cowork" marker without
+# a new real ask.
+CLAUDE_HOME_ROW_GAP = int(round((45 - 0.5 * DESIGN_BADGE_SIZE) * UI_SCALE))
+
+# Real ask 2026-08-03 (Antonio, live, right after CLAUDE_CODE_REVIEW_GAP
+# shipped and the horizontal position was confirmed correct): move the
+# badge up 1.5 badge-heights from its row-centred default. Same
+# is_code_review scoping as the gap above, so this can't misapply to
+# plain chat/Cowork's own row-centred vertical position.
+# Real bug found live 2026-08-03 (Antonio, screenshot: "Auto" state,
+# badge landing UP on the "asasas" text line, clamped to the very top of
+# the box). Root cause: same row-selection fix as CLAUDE_CODE_REVIEW_GAP
+# above -- the row it centres on now sits much closer to the box's own
+# top than when this 1.5x shift was tuned, so subtracting a fixed 1.5
+# badge-heights now overshoots PAST the box's top edge entirely and hits
+# the clamp, landing in the text row instead of the toolbar row. That
+# clamp only existed to keep the badge inside the box, not to be relied
+# on as the real position -- removing the now-stale manual shift and
+# trusting the row-centring math directly, same as every other layout
+# that doesn't need this extra correction.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Claude works well. Lock
+# all of them please"). Do not retune without a new real ask.
+CLAUDE_CODE_REVIEW_VSHIFT = 0
+
+# Real ask 2026-08-03 (Antonio, live, Gemini's Home "What should we focus
+# on?" single-line composer: "it should move up a little to be inline
+# with flash"). _toolbar_cluster_left's only real candidate for this
+# composer is the "Flash" model-picker button's own clickable hit-area
+# (row=(556,597), 41px tall), which is taller than the "Flash" text
+# actually rendered inside it -- centring on the whole hit-area lands the
+# badge a bit lower than the visible text. FIRST-PASS estimate, expect to
+# retune once confirmed live.
+# Retuned 2026-08-03 (Antonio, live, right after: "It looks as if you
+# moved it down. So i think move it up a half a badge size would be the
+# best play for this sizing"). Root cause of the "moved down" report:
+# the row-centred position was already landing above the box's own top
+# edge even with zero vshift, so the clamp was silently absorbing the
+# whole 10px and this constant had ZERO real effect -- fixed at the
+# source in _position_for (the clamp's top bound now loosens by the
+# vshift instead of fighting it), so this value finally reaches the
+# screen. 10 -> half a badge width, as asked, now measured in real design
+# pixels instead of a guessed constant.
+# Retuned 2026-08-03 (Antonio, live, right after: "Maybe move it down a
+# quarter of a badge size thats the one. make sure you actually move it
+# down exactly that distance"). Now that the clamp fix above makes this
+# value a direct, linear 1:1 pixel offset (confirmed via the math: with
+# the natural row-centre already above rect.top for this composer, the
+# final position collapses to exactly `rect.top - GEMINI_VSHIFT`, no
+# other term matters), a straight 0.5x -> 0.25x reduction moves it down
+# by precisely 0.25 badge-widths, exactly as asked.
+# Retuned 2026-08-03 (Antonio, live, right after: "another 1/4 of the
+# badge down please"). 0.25x -> 0x, same direct 1:1 relationship.
+# Retuned 2026-08-03 (Antonio, live, right after: "Push the badge up like
+# 1/5th of the badge size please you almost have the gemini in line with
+# the text"). 0x -> 0.2x, same direct 1:1 relationship.
+# Retuned 2026-08-03 (Antonio, live, right after: "move it down 1/6th of
+# the badge size please si close"). 0.2x -> (0.2 - 1/6)x, same direct 1:1
+# relationship, net move down by exactly 1/6 badge-width.
+# Retuned 2026-08-03 (Antonio, live, right after: "Just up a very little").
+# Small nudge up, +0.05 badge-widths.
+# Retuned 2026-08-03 (Antonio, live, right after: "One more time very very
+# little please youre so close"). Tiniest nudge up, +0.02 badge-widths.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Nice lock that in for the
+# single line center page gemini... the center page chatbox is done" --
+# covers both the single-line case this constant governs AND the multi-
+# line below-row fallback, confirmed working as-is with no further
+# tuning needed, see the fallback's own call-site comment). Do not retune
+# without a new real ask.
+GEMINI_VSHIFT = int(round((0.2 - 1.0 / 6.0 + 0.05 + 0.02) * DESIGN_BADGE_SIZE * UI_SCALE))
+
+# Real ask 2026-08-03 (Antonio, live, screenshot: Grok's Home single-line
+# composer only, explicitly NOT the multi-line one -- "the badge isnt
+# sitting inline with the Fast next to it... raising up the badge by
+# 1/4th the size of the badge itself should get it closer"). Scoped to
+# single-line specifically via GROK_SINGLE_LINE_MAX_HEIGHT below, a
+# raw-box-height check, so the already-good multi-line composer (a much
+# taller raw box once text wraps) can never pick this up.
+# Retuned 2026-08-03 (Antonio, live, right after: "you did move it up but
+# again you cant move it to up so move it down just a bit to get it
+# inline with the Fast"). 0.25x -> 0.15x badge-widths.
+# Retuned 2026-08-03 (Antonio, live, right after: "Move it down a 1/4th
+# of its own size please"). 0.15x -> -0.10x badge-widths (goes negative
+# on purpose, same "subtract past zero -> push down further" relationship
+# as every other toolbar_row_vshift dial in this file).
+# Retuned 2026-08-03 (Antonio, live, right after: "move it up a 1/6th of
+# th badge please"). -0.10x -> (1/6 - 0.10)x badge-widths.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Ok lock grok that is now
+# done"). Covers the single-line composer (this constant) and the multi-
+# line composer (already correct with zero override, see
+# GROK_SINGLE_LINE_MAX_HEIGHT's own scoping note). Do not retune without
+# a new real ask.
+GROK_SINGLE_LINE_VSHIFT = int(round((1.0 / 6.0 - 0.10) * DESIGN_BADGE_SIZE * UI_SCALE))
+
+# Real ask 2026-08-03 (Antonio, live, right after Copilot was first wired
+# into the below-row detector: "you need to move the badge below about 1
+# and a 1/2 badge spaces please"). Negative on purpose -- same "subtract
+# past zero -> push down" relationship as every other toolbar_row_vshift
+# dial in this file.
+# CONFIRMED CORRECT (Antonio, live, 2026-08-03: "Lock it please this is
+# great you fixed it" -- covers single-line and multi-line, both routed
+# through the same below-row detector once the ancestor-climb depth fix
+# let it actually find the real toolbar row, see
+# _below_toolbar_cluster_left's own comment on that). Do not retune
+# without a new real ask.
+COPILOT_VSHIFT = -int(round(1.5 * DESIGN_BADGE_SIZE * UI_SCALE))
+
+# Raw (pre-widen) box height threshold separating Grok's single-line Home
+# composer from the multi-line one -- measured single-line real height
+# was ~45px (683,486,1315,531); comfortably below where genuine multi-
+# line growth starts.
+GROK_SINGLE_LINE_MAX_HEIGHT = S(80)
+
+# Real ask 2026-08-03 (Antonio, live, Cowork home composer: "you didnt add
+# it to the area i asked it barley got moved i need you to move the badge
+# only to the right"), right after the split_left_right fix shipped --
+# that fix anchors to the real leftmost control in the right-hand cluster,
+# but "Opus 4.8"/"Sonnet 5" itself is invisible to UIA (see
+# BADGE_TOOLBAR_GAP_OVERRIDES's own comment, same root issue on the OTHER
+# Claude layout), so the base BADGE_TOOLBAR_GAP alone still lands the
+# badge short of the label, not clearly past it. Negative on purpose, same
+# "subtract a negative -> push right" trick as CLAUDE_INLINE_SEND_EXTRA_GAP.
+# Retuned 2026-08-03 (Antonio, live, right after 1.5x shipped: "move it to
+# the right a lot more please"). Original ask was "3-4 badge lengths" from
+# its pre-fix position -- 1.5x badge was too timid a first guess. 1.5 -> 3.5.
+CLAUDE_HOME_ROW_EXTRA_GAP = -int(round(3.5 * DESIGN_BADGE_SIZE * UI_SCALE))
+
 # Approximate height of the CLI's own bordered input box (top border, the
 # ">" prompt line, bottom border) within a terminal's single accessible
 # TermControl, which otherwise covers the entire pane -- see the raw_rect
 # slicing in watch_loop. FIRST-PASS ESTIMATE (Antonio's own screenshot of
 # the box, not a measured font/line-height), expect to retune once seen
 # live against a real rendered layout.
+#
+# Real bug found live 2026-08-02 (Antonio, screenshot: badge floating on
+# empty black space in Claude's "Code" view, "AI Summer Project" -- the
+# view's actual content is compact and sits well above the pane's true
+# bottom, so slicing the literal bottom N px of the whole pane landed on
+# blank space instead of the real input line). This blind guess only ever
+# worked by coincidence, when a pane happened to be full enough of
+# scrollback that the input line really was near the bottom -- see
+# _find_terminal_input_line_rect below for the real fix, this constant is
+# now ONLY the fallback for when that fails.
 TERMINAL_INPUT_BOX_HEIGHT_GUESS = S(70)
+
+# Cache for _find_terminal_input_line_rect: real UIA range-navigation
+# calls are the exact cost that made the old line-by-line version of
+# _extract_terminal_input_line unusable (0.5-1s PER call, see that
+# function's own docstring for the full story) -- so this is deliberately
+# NOT recomputed every 0.7s watch_loop tick. Time-based, not content-
+# based: badge position doesn't need to react within one tick, a couple
+# seconds of staleness while actively typing is a fair trade against
+# paying UIA's real per-call cost on every single tick regardless of
+# whether anything changed.
+_TERMINAL_LINE_RECT_CACHE_SECONDS = 2.0
+_terminal_line_rect_cache = {"time": 0.0, "hwnd": None, "rect": None}
+
+
+def _find_terminal_input_line_rect(text_pattern, hwnd):
+    """Real screen rect of the terminal's current input line, found via
+    UIA's own text-range API instead of the blind "bottom N px of the
+    whole pane" guess (TERMINAL_INPUT_BOX_HEIGHT_GUESS) that breaks
+    whenever the pane isn't full of content -- see that constant's own
+    comment for the live repro this exists to fix.
+
+    Deliberately NOT the line-by-line Move(TextUnit.Line) walk that was
+    already tried and reverted for cost in _extract_terminal_input_line
+    (0.5-1s PER navigation call from an unknown starting point, stacking
+    to a real 3-7s Apply delay). This uses a FIXED, small number of calls
+    instead: FindText jumps directly to the marker in one call,
+    ExpandToEnclosingUnit and GetBoundingRectangles run ONCE each on that
+    one resulting range -- three calls total, not four to eight. Time-
+    boxed by the caller's own cache (see _TERMINAL_LINE_RECT_CACHE_SECONDS)
+    so even this bounded cost isn't paid on every single tick.
+
+    Returns None (caller falls back to TERMINAL_INPUT_BOX_HEIGHT_GUESS)
+    if the marker isn't found, isn't the REAL live one, the range can't
+    be expanded, or no rectangle comes back -- same fail-safe every
+    terminal detection in this file already uses, so this can never make
+    positioning worse than the guess it's replacing.
+
+    Real bug found live 2026-08-02 (Antonio, direct, right after this
+    first shipped): FindText(backward=True) returns the LAST "❯" in the
+    whole captured buffer, but Claude Code's CLI echoes one for every
+    PAST turn in scrollback too -- the exact same stale-marker trap
+    _extract_terminal_input_line already solved (2026-07-27) by requiring
+    a real border run directly above a marker before trusting it as the
+    live one, not just anything reachable in scrollback. This reuses that
+    EXACT proven check (_BORDER_RUN_RE / _TERMINAL_TOP_BORDER_MAX_GAP, the
+    same constants, not a re-derived guess) against one extra cheap
+    GetText(-1) call (confirmed elsewhere in this file at ~0.001s
+    regardless of buffer size) before ever trusting FindText's result."""
+    now = time.time()
+    cache = _terminal_line_rect_cache
+    if hwnd == cache["hwnd"] and (now - cache["time"]) < _TERMINAL_LINE_RECT_CACHE_SECONDS:
+        return cache["rect"]
+    result = None
+    try:
+        started = time.time()
+        doc = text_pattern.DocumentRange
+        full_text = doc.GetText(-1)
+        marker_is_live = False
+        if full_text:
+            marker_pos = full_text.rfind("❯")
+            if marker_pos != -1:
+                top_border = None
+                for m in _BORDER_RUN_RE.finditer(full_text, 0, marker_pos):
+                    top_border = m
+                if top_border is not None and (marker_pos - top_border.end()) <= _TERMINAL_TOP_BORDER_MAX_GAP:
+                    marker_is_live = True
+        if marker_is_live:
+            found = doc.FindText("❯", True, False)
+            if found is not None and found.ExpandToEnclosingUnit(auto.TextUnit.Line):
+                rects = found.GetBoundingRectangles()
+                if rects:
+                    left = min(r.left for r in rects)
+                    top = min(r.top for r in rects)
+                    right = max(r.right for r in rects)
+                    bottom = max(r.bottom for r in rects)
+                    if right > left and bottom > top:
+                        result = _SimpleRect(left, top, right, bottom)
+        elapsed = time.time() - started
+        # Real timing, not assumed -- this is exactly the measurement that
+        # caught the earlier line-by-line approach costing 0.5-1s per call
+        # live; logged so the same check can be made on this replacement
+        # before trusting it, same discipline every fix in this file uses.
+        log(f"_find_terminal_input_line_rect: {elapsed:.3f}s, "
+            f"marker_is_live={marker_is_live}, "
+            f"{'found' if result is not None else 'not found'}")
+    except Exception as e:
+        log_exception(f"_find_terminal_input_line_rect: {e!r}")
+        result = None
+    cache["time"] = now
+    cache["hwnd"] = hwnd
+    cache["rect"] = result
+    return result
 
 # Window-relative fallback ONLY (2026-07-26) -- for a terminal where UIA
 # exposes no control at all (unlike Windows Terminal's TermControl, which
 # the slicing above now handles as a real box). Kept as a last-resort
-# safety net, not the primary path anymore.
+# safety net, not the primary path anymore -- confirmed dead for THIS
+# terminal live (2026-07-31, debug.log: a real TermControl is always
+# found, rect always spans the full pane width), so this was the wrong
+# constant to touch for "move the code badge right" -- see
+# BADGE_INSIDE_INSET_OVERRIDES instead, which drives the real path.
 TERMINAL_STATUS_LEFT_OFFSET = S(230)
 TERMINAL_STATUS_BOTTOM_OFFSET = S(25)
 
@@ -3827,11 +5077,46 @@ class _BadgeRect:
     coordinate the badge is anchored to can be a corrected value (see
     _input_box_left) rather than only ever a live UIA object. Exposes the
     same .left/.top/.right/.bottom the positioning code already reads, so
-    it's interchangeable with a real Rect everywhere downstream."""
-    __slots__ = ("left", "top", "right", "bottom")
+    it's interchangeable with a real Rect everywhere downstream.
 
-    def __init__(self, left, top, right, bottom):
+    toolbar_left (2026-07-30) is extra, optional precision on top of that:
+    the real left edge of an inline toolbar cluster (see
+    _toolbar_cluster_left), when one was found. A real UIA BoundingRectangle
+    never has this attribute, so _position_for reads it via getattr(...,
+    None), never a direct .toolbar_left, to stay interchangeable with one.
+
+    toolbar_row_top/toolbar_row_bottom (2026-07-30, see
+    _below_toolbar_cluster_left) are the further-still precision a
+    below-the-text-row toolbar layout needs: that row's OWN vertical span,
+    distinct from this whole rect's top/bottom (which for those sites spans
+    the text row plus the toolbar row combined). When set, _position_for
+    centres the badge on the row instead of the whole box.
+
+    toolbar_extra_gap (2026-07-30, see BADGE_TOOLBAR_GAP_OVERRIDES) is a
+    per-OPEN, not per-site, extra pixel gap on top of BADGE_TOOLBAR_GAP --
+    set by the caller only when the specific detection path used actually
+    needs it (Claude's plain-chat layout, compensating for a label UIA
+    can't see), left at 0 for every other path, including Claude's OTHER
+    (Cowork) layout, so a fix for one Claude layout can't misapply to the
+    other just because they share an app_label."""
+    __slots__ = ("left", "top", "right", "bottom", "toolbar_left",
+                 "toolbar_row_top", "toolbar_row_bottom", "toolbar_extra_gap",
+                 "toolbar_row_vshift")
+
+    def __init__(self, left, top, right, bottom, toolbar_left=None,
+                 toolbar_row_top=None, toolbar_row_bottom=None,
+                 toolbar_extra_gap=0, toolbar_row_vshift=0):
         self.left, self.top, self.right, self.bottom = left, top, right, bottom
+        self.toolbar_left = toolbar_left
+        self.toolbar_row_top = toolbar_row_top
+        self.toolbar_row_bottom = toolbar_row_bottom
+        self.toolbar_extra_gap = toolbar_extra_gap
+        # Vertical counterpart to toolbar_extra_gap (2026-08-03, see
+        # CLAUDE_CODE_REVIEW_VSHIFT): pixels to shift the row-centred `by`
+        # UP before the box-bounds clamp. 0 for every path except the one
+        # that explicitly sets it, same per-detection-path scoping as the
+        # horizontal gap.
+        self.toolbar_row_vshift = toolbar_row_vshift
 
 
 def _input_box_left(control):
@@ -3891,6 +5176,937 @@ def _input_box_left(control):
             return None
 
 
+# Sites whose toolbar (model selector, mic, voice) sits INLINE to the right
+# of the composer, in the same row, outside the UIA-detected control's own
+# rect (confirmed live 2026-07-28: ChatGPT/Gemini badge landed mid-toolbar
+# instead of at the bar's true right edge). Claude/Perplexity/Copilot put
+# that same toolbar row BELOW the input instead, so their detected rect
+# already spans the full visual width -- deliberately not in this set (see
+# BADGE_WIDEN_DOWN_SITES below for the HEIGHT half of that same "below the
+# input" layout, which turned out not to be fine after all). Each site
+# gets its own explicit slot (Antonio, direct: "I want llm to have their
+# own spot... rather than 1 spot per"), not a universal formula applied to
+# every site.
+BADGE_WIDEN_RIGHT_SITES = {"Gemini"}
+
+# Sites whose toolbar (Search/Computer picker, Model picker, mic) sits
+# BELOW the composer's own single-line text row, in a separate row UIA
+# doesn't fold into the focused control's own rect -- confirmed live
+# 2026-07-30 (Antonio, screenshots): Perplexity and Copilot both showed the
+# badge sitting at the box's top-right CORNER, overlapping the rounded
+# border, instead of centred against the whole visual card. The comment
+# above BADGE_WIDEN_RIGHT_SITES assumed these two "already span the full
+# visual width" -- true for width, but nobody had a screenshot to check
+# HEIGHT until now: their detected rect apparently only covers the short
+# top text line, so _position_for's vertical centring (box_h // 2) lands
+# well above the true visual centre of the taller full card.
+#
+# FIRST-PASS HYPOTHESIS from screenshot proportions, not a live rect
+# measurement (same caveat as BADGE_INSIDE_INSET_OVERRIDES) -- expect to
+# retune once confirmed against a real debug.log "badge rect source" line.
+#
+# Claude, Grok, DeepSeek added same day as BADGE_TOOLBAR_BELOW_SITES below,
+# same reasoning -- gives those three a sane widened-box fallback for
+# whatever rare tick _below_toolbar_cluster_left doesn't find a row on.
+#
+# ChatGPT moved here from BADGE_WIDEN_RIGHT_SITES (2026-08-01, real ask:
+# "the way it sits in one line is good, but when you add more lines it
+# doesn't move to the right place"). Root-caused with real evidence, not
+# assumed: queried ChatGPT's live composer via getBoundingClientRect() at
+# 1, 3, and 6 lines. Confirmed the toolbar row (Add files / model picker /
+# mic / send) sits in its OWN row below the text -- textbox bottom stayed
+# ~91-92px the whole time while textbox top climbed from -2 to -107 as
+# lines were added (grows UPWARD, exactly Claude's documented shape) --
+# and the toolbar row's own top/bottom barely moved (92->88, 128->124).
+# ChatGPT was wrongly in the SAME-ROW family (BADGE_WIDEN_RIGHT_SITES /
+# _toolbar_cluster_left, built for Gemini's actual same-row layout), which
+# explains the reported instability: that function's "same row as the
+# text" gate is checking a relationship that was never true for ChatGPT's
+# real DOM, so it only ever matched by accident on some ticks.
+BADGE_WIDEN_DOWN_SITES = {"Perplexity", "Copilot", "Claude", "Grok", "DeepSeek", "ChatGPT", "Gemini"}
+
+# Sites in BADGE_WIDEN_DOWN_SITES whose badge should ALSO dock left of the
+# below-row toolbar's right-hand group (Model dropdown, mic, submit) via
+# _below_toolbar_cluster_left, instead of the plain widened-box fallback
+# inset. Real ask 2026-07-30 (Antonio, screenshot): Perplexity's badge sat
+# crowded between the mic icon and the submit arrow -- move it to before
+# "Model" instead.
+#
+# Widened same day (Antonio, screenshots): Claude, Grok, and DeepSeek all
+# showed the identical shape of bug -- a toolbar row (Opus/High, Fast,
+# DeepThink/Search) sitting BELOW the composer's own text area, badge
+# correct on a short single-line box (where box-centre happens to land
+# near the row by coincidence) but floating well above it, sometimes
+# mid-text, the moment the box grows past one line. Same layout family as
+# Perplexity, same fix. Copilot stays OUT on purpose -- still nobody's
+# reported this on Copilot specifically, so it keeps the plain widened-box
+# fallback rather than being switched to unconfirmed logic it doesn't need.
+#
+# Antonio, live, 2026-08-03: "Perplexity is perfect make it locked please
+# the center screen is perfect and the bottom is perfect too even with
+# the multiple lines" -- true for the plain search composer, both single-
+# and multi-line. Turned out NOT to cover every Perplexity composer,
+# though: a separate task/Computer-mode layout (see
+# BADGE_TOOLBAR_GAP_OVERRIDES's "Perplexity" entry) needed its own real
+# gap, caught right before this lock was finalized.
+#
+# Copilot finally added 2026-08-03 (Antonio, screenshots: badge floating
+# fully disconnected from the composer -- top of the "Trending Topics"
+# list on the empty single-line box, dead centre of the text area on the
+# multi-line one -- explicit real ask: "it should sit next to the send
+# arrow... dont move it away from the left side of the arrow when you
+# add more lines"). Exactly the "nobody's reported this yet" gap the
+# comment above used to describe -- same below-row family as Claude/
+# Perplexity/Grok now that it has one.
+#
+# DeepSeek CONFIRMED CORRECT as-is (Antonio, live, 2026-08-03: "Deepseek
+# is also locked and done too") -- plain defaults, no per-site override
+# needed, same as Perplexity's own plain search composer.
+BADGE_TOOLBAR_BELOW_SITES = {"Perplexity", "Claude", "Grok", "DeepSeek", "ChatGPT", "Copilot"}
+
+
+def _input_box_right(control, raw_right):
+    """Mirrors _input_box_left, widening the RIGHT edge instead of the left,
+    for the sites in BADGE_WIDEN_RIGHT_SITES only. Same bounded ancestor walk
+    and same delta/row/height gates, just measuring from the opposite edge."""
+    try:
+        base = control.BoundingRectangle
+        mid_y = (base.top + base.bottom) // 2
+        base_h = base.bottom - base.top
+        best_right = raw_right
+        node = control
+        for _ in range(6):
+            try:
+                node = node.GetParentControl()
+            except Exception:
+                break
+            if node is None:
+                break
+            try:
+                r = node.BoundingRectangle
+            except Exception:
+                continue
+            delta = r.right - raw_right
+            same_row = (r.top <= mid_y <= r.bottom)
+            reasonable_height = (r.bottom - r.top) <= base_h * 4 + 200
+            if 30 <= delta <= 250 and same_row and reasonable_height:
+                best_right = max(best_right, r.right)
+        return best_right
+    except Exception:
+        return raw_right
+
+
+def _input_box_bottom(control, raw_bottom):
+    """Mirrors _input_box_right, widening the BOTTOM edge instead of the
+    right, for BADGE_WIDEN_DOWN_SITES only. Same bounded ancestor walk, but
+    gated on horizontal overlap (same COLUMN) instead of vertical (same
+    row) -- here the extra toolbar is a row stacked below the text line,
+    not a cluster sitting beside it, so "does this ancestor cover the same
+    horizontal span" is the right same-widget test instead."""
+    try:
+        base = control.BoundingRectangle
+        mid_x = (base.left + base.right) // 2
+        base_w = base.right - base.left
+        best_bottom = raw_bottom
+        node = control
+        for _ in range(6):
+            try:
+                node = node.GetParentControl()
+            except Exception:
+                break
+            if node is None:
+                break
+            try:
+                r = node.BoundingRectangle
+            except Exception:
+                continue
+            delta = r.bottom - raw_bottom
+            same_column = (r.left <= mid_x <= r.right)
+            reasonable_width = (r.right - r.left) <= base_w * 4 + 200
+            if 20 <= delta <= 200 and same_column and reasonable_width:
+                best_bottom = max(best_bottom, r.bottom)
+        return best_bottom
+    except Exception:
+        return raw_bottom
+
+
+# Real interactive control types the toolbar cluster (model-picker dropdown,
+# mic, submit) is actually made of, as opposed to the wrapper Group/Pane
+# elements that also happen to cover the same screen area. See
+# _toolbar_cluster_left.
+# Real direction 2026-07-30 (Antonio, direct, after the TextControl patch
+# below fixed Claude but only that one site's specific gap): "find the open
+# space on all the chat boxes where what I'm telling you would be" -- stop
+# allowlisting individual control types one site-report at a time (Button,
+# then ComboBox, then TextControl for Claude's plain-text "Opus 4.8"
+# label...) and instead treat almost ANYTHING with a real, visible rect in
+# the toolbar band as occupied space to dock BEFORE, the same denylist
+# philosophy _NEVER_A_COMPOSER_CONTROL_TYPES already uses below (an
+# allowlist means every missed type is a silent per-site bug; a denylist of
+# the few types that are never real occupied content is far harder to miss
+# a case on). Wrapper/container types are the only exclusion -- they WRAP
+# the real content rather than being it, so counting them as candidates
+# too would anchor on the wrapper's own (often wider) edge instead of the
+# real element inside it; _walk_toolbar_children still recurses into them
+# either way to reach what's actually inside.
+_TOOLBAR_WRAPPER_TYPES = {
+    "PaneControl", "GroupControl", "CustomControl", "WindowControl",
+    "DocumentControl",
+}
+
+# Control types that can never legitimately be a chat composer. Real bug
+# confirmed live 2026-07-30 (Antonio, screenshot): the badge anchored
+# directly onto a range-slider's thumb on an unrelated claude.ai Artifact
+# page -- app_label_for only answers WHICH SITE this is (domain/title
+# match), it never checks WHAT'S ACTUALLY FOCUSED, so any focused control
+# on a recognized LLM domain got trusted as "the composer," slider thumbs
+# included.
+#
+# A DENYLIST on purpose, not an allowlist: matching every real composer's
+# exact control type across every current and future supported site would
+# be guesswork, and a missed type would silently break that site's badge
+# entirely. These are instead the few types that can safely be assumed to
+# NEVER be a real text composer no matter which site they show up on --
+# narrow and low-risk, same spirit as the single-type DocumentControl
+# rejection this reuses (see the "whole-page control" comment below).
+_NEVER_A_COMPOSER_CONTROL_TYPES = {
+    "SliderControl", "ThumbControl", "ButtonControl", "SplitButtonControl",
+    "CheckBoxControl", "RadioButtonControl", "ProgressBarControl",
+    "ScrollBarControl", "TabControl", "TabItemControl", "MenuItemControl",
+    "ToolBarControl", "ImageControl", "SeparatorControl",
+}
+
+
+def _safe_next_sibling(node):
+    try:
+        return node.GetNextSiblingControl()
+    except Exception:
+        return None
+
+
+# Real bug found live 2026-07-31 (Antonio, caught directly in his own
+# debug.log): the "unrecognized browser tab" diagnostic below logged a
+# Gmail compose ancestor's accessible Name in full -- which turned out to
+# be the ENTIRE typed email body (name, phone, email, the works). That
+# diagnostic's own comment claimed Name is "structural UI labels, never
+# typed content, same privacy standard as the badge-rect logging
+# elsewhere" -- an assumption that was never actually verified and turned
+# out to be false for at least this one real app. Real UI labels/titles
+# are short; mirrored typed content routinely isn't. Capping length is a
+# blunt but effective backstop that doesn't require knowing in advance
+# which apps do this -- a genuine label still reads fine truncated, a
+# leaked paragraph gets cut down to nothing meaningful.
+_DIAG_NAME_MAX = 40
+
+
+def _safe_diag_name(name):
+    if not name:
+        return name
+    name = str(name)
+    if len(name) > _DIAG_NAME_MAX:
+        return name[:_DIAG_NAME_MAX] + "…[truncated]"
+    return name
+
+
+def _composer_diag_dump(control, tag, depth=3):
+    """Structural dump of a composer's own ancestor chain and each
+    ancestor's immediate children (type, length-capped name, rect) --
+    generalized 2026-07-31 from the Claude-only version that successfully
+    found the real cause of several real bugs today (the invisible-to-UIA
+    "Opus 4.8" label, the Cowork inline Send button, a UIA staleness
+    glitch). Applying the same real-evidence approach to ChatGPT/Gemini's
+    "no row found" failure on a taller/expanded composer state instead of
+    guessing whether it's a depth problem or a gate-tuning problem.
+    `tag` is just the log-line label (e.g. "claude", "widen-right") so
+    multiple call sites share this one implementation without their
+    output being ambiguous about which composer it came from."""
+    try:
+        anc = control
+        for d in range(depth):
+            kids = []
+            try:
+                child = anc.GetFirstChildControl()
+            except Exception:
+                child = None
+            n = 0
+            while child is not None and n < 20:
+                try:
+                    cr = child.BoundingRectangle
+                    kids.append((child.ControlTypeName, _safe_diag_name(child.Name),
+                                 (cr.left, cr.top, cr.right, cr.bottom)))
+                except Exception:
+                    pass
+                child = _safe_next_sibling(child)
+                n += 1
+            # Node's own Name deliberately NOT logged (privacy) -- at
+            # depth 0 this IS the focused composer, and some apps mirror
+            # typed content into Name (see _safe_diag_name's own comment).
+            try:
+                r = anc.BoundingRectangle
+                anc_desc = (anc.ControlTypeName, (r.left, r.top, r.right, r.bottom))
+            except Exception:
+                anc_desc = (None, None)
+            log(f"{tag} composer diag[{d}]: node={anc_desc} children={kids}")
+            try:
+                anc = anc.GetParentControl()
+            except Exception:
+                break
+            if anc is None:
+                break
+    except Exception:
+        log_exception(f"{tag} composer diag")
+
+
+def _walk_toolbar_children(node, raw_right, mid_y, out, depth):
+    # Bounded depth -- this only ever walks a single toolbar row's own
+    # subtree (a handful of controls), never the wider window, so staying
+    # cheap even unbounded in breadth is fine.
+    if depth > 4:
+        return
+    try:
+        child = node.GetFirstChildControl()
+    except Exception:
+        return
+    while child is not None:
+        try:
+            ctype = child.ControlTypeName
+            r = child.BoundingRectangle
+        except Exception:
+            child = _safe_next_sibling(child)
+            continue
+        real_size = (r.right > r.left) and (r.bottom > r.top)
+        # Inside the toolbar cluster (right of the text area's own edge,
+        # before any widening) and roughly level with it vertically -- the
+        # toolbar row itself, not text wrapped above/below it. Denylist,
+        # not allowlist (see _TOOLBAR_WRAPPER_TYPES) -- anything real and
+        # visibly sized in this band counts as occupied space to dock
+        # BEFORE, whether it's a button, a dropdown, a plain text label, or
+        # an icon; only pure wrapper/container types are skipped as
+        # CANDIDATES (they're still walked into below either way).
+        if (ctype not in _TOOLBAR_WRAPPER_TYPES and real_size
+                and r.left >= raw_right - S(4)
+                and r.top - S(20) <= mid_y <= r.bottom + S(20)):
+            # (left, top, bottom, type) -- real ask 2026-07-30 (Antonio,
+            # several screenshots, ChatGPT/Perplexity/Grok all showing the
+            # same thing: badge correct on a short single-line composer,
+            # wrong -- floating well above the toolbar -- the moment it
+            # grows to multiple lines). Used to be just r.left. ctype is
+            # extra (2026-07-30, Claude still landing wrong after the
+            # denylist widening): callers log the full candidate list now,
+            # so the NEXT report has real data on what was actually found
+            # instead of another guess. The callers' row_top/row_bottom
+            # (see _toolbar_cluster_left / _below_toolbar_
+            # cluster_left) were computed from the loosely-matched ANCESTOR
+            # row node's own bounding rect, which routinely extends well
+            # above the visible icon row (confirmed live, Perplexity: an
+            # ancestor spanning y=485..604 for a toolbar that only visually
+            # occupies roughly the bottom ~50px of that). These real
+            # CHILD controls -- the actual dropdown/mic/submit -- are tight
+            # and accurate by construction; deriving the row's vertical
+            # span from THEM instead of the ancestor fixes it at the root
+            # for every site sharing this helper, not just one at a time.
+            out.append((r.left, r.top, r.bottom, ctype))
+        _walk_toolbar_children(child, raw_right, mid_y, out, depth + 1)
+        child = _safe_next_sibling(child)
+
+
+def _toolbar_cluster_left(control, raw_right, split_left_right=False):
+    """Real left edge of the inline toolbar cluster (model-picker dropdown,
+    mic, submit) that sits to the right of the composer's own text area, for
+    BADGE_WIDEN_RIGHT_SITES sites -- Gemini's "Flash" dropdown + mic,
+    ChatGPT's "Medium" dropdown + mic + submit circle.
+
+    Real bug found live 2026-07-30 (Antonio, screenshots of both sites): the
+    badge, docked a fixed pixel inset in from the ROW's widened right edge
+    (_input_box_right / BADGE_INSIDE_INSET_OVERRIDES), landed right on top
+    of the mic icon on both -- the toolbar cluster's total width differs by
+    site (the dropdown's label text: "Flash" vs "Medium") and can change, so
+    no single fixed inset clears it reliably. Antonio's explicit ask: dock
+    to the LEFT of the dropdown itself, not some guessed distance from the
+    row's edge.
+
+    Walks the same bounded ancestor chain _input_box_right uses to find the
+    row containing the toolbar, then walks ITS descendants (also bounded,
+    see _walk_toolbar_children) for real interactive controls positioned
+    inside the toolbar band. Screenshots confirm toolbar order is always
+    dropdown, then mic, then submit on both sites, so the LEFTMOST such
+    control is the dropdown -- anchoring there puts the badge left of the
+    whole cluster, exactly as asked, without needing to know how wide the
+    cluster is.
+
+    Returns None if no row or no plausible toolbar control is found, so the
+    caller can fall back to the older widened-edge/inset math instead of
+    mis-anchoring on a layout this doesn't recognize. Otherwise returns
+    (left_x, row_top, row_bottom).
+
+    Real bug confirmed live 2026-07-30 (Antonio, screenshots -- ChatGPT,
+    Perplexity, Claude, Grok, DeepSeek all showed the same thing: badge
+    correct on a short single-line composer, wrong -- floating well above
+    the toolbar, sometimes mid-paragraph -- the moment it grows past one
+    line, and confirmed STILL wrong (Antonio, a further screenshot, right
+    after the first version of this fix shipped) even for just two lines.
+    Root cause, found by reading the actual debug.log this time instead of
+    reasoning about it: this used to gate everything -- both which ANCESTOR
+    counts as "the row" and which CHILD controls count as toolbar members
+    -- on mid_y, the vertical MIDPOINT of the focused EditControl's own
+    rect. That rect grows with the text, so mid_y drifts upward as lines
+    are added; a real debug.log pair confirmed it works at 1 line
+    (row=(966,998), a hit) and returns nothing at 2 lines (row=(None,None),
+    a miss) on the exact same composer. Real fix: multiple confirmed
+    live examples (Claude, ChatGPT) show these composers grow UPWARD --
+    base.bottom stays put (or close to it) as base.top moves up to fit
+    more lines, since the toolbar is anchored to the bottom of the
+    composer and the text area grows above it. base.bottom is therefore a
+    far more stable reference for "roughly where the toolbar is" than a
+    midpoint that shifts with every line of text, so both gates below use
+    it instead of mid_y.
+
+    split_left_right (2026-08-03, real ask: Claude's Cowork home
+    composer, "How can I help you today?"): unlike ChatGPT/Gemini,
+    which only ever have ONE trailing cluster in their toolbar row,
+    this composer's row has TWO -- a "+/Chat/Cowork" toggle group on
+    the left, and "Opus 4.8/High/mic/Send" on the right. Antonio,
+    live, screenshot: badge landed right after "Cowork" instead of
+    near "Opus 4.8" -- confirmed the left group was satisfying the
+    same left-edge gate the right group does, so plain min() picked
+    the leftmost thing in the WHOLE row. When True, only controls
+    right of the row's own midpoint count as candidates, the same
+    left/right split _below_toolbar_cluster_left already does for its
+    own two-cluster below-row case. Default False leaves ChatGPT/
+    Gemini's already-confirmed-correct behavior untouched."""
+    try:
+        base = control.BoundingRectangle
+    except Exception:
+        return None
+    y_ref = base.bottom
+    base_h = base.bottom - base.top
+    row = None
+    node = control
+    for _ in range(6):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            break
+        if node is None:
+            break
+        try:
+            r = node.BoundingRectangle
+        except Exception:
+            continue
+        # Same UIA-staleness fail-safe as _below_toolbar_cluster_left's
+        # identical check (see its own comment for the real bug this
+        # caught live) -- a glitched query returning a nonsensical rect
+        # (tens of thousands of px tall) would otherwise still clear the
+        # width/row gates below and get trusted as real.
+        sane_height = 0 < (r.bottom - r.top) <= 5000
+        sane_coords = -10000 <= r.top <= 10000 and -10000 <= r.bottom <= 10000
+        if not (sane_height and sane_coords):
+            continue
+        delta = r.right - raw_right
+        # Real bug found live 2026-08-02 (Antonio, ChatGPT: badge landing
+        # low/left of where it should). Root-caused via a live DOM
+        # measurement of the actual page, not guessed: the correct
+        # ancestor (delta=94, exactly right) was being rejected because
+        # its bottom edge sat 3px ABOVE y_ref (887 vs 890) -- a routine
+        # CSS padding/border-box difference between the textarea and its
+        # wrapping flex container, not a sign this is the wrong element.
+        # The zero-tolerance same_row check rejected the right answer over
+        # a few pixels of totally normal layout noise. A small tolerance
+        # absorbs that without loosening the check enough to start
+        # matching genuinely unrelated rows (which sit tens+ px away, not
+        # single-digit px away, in every real example seen so far).
+        SAME_ROW_TOLERANCE = S(10)
+        same_row = (r.top - SAME_ROW_TOLERANCE <= y_ref <= r.bottom + SAME_ROW_TOLERANCE)
+        reasonable_height = (r.bottom - r.top) <= base_h * 4 + 200
+        if 30 <= delta <= 250 and same_row and reasonable_height:
+            row = node
+    if row is None:
+        # Diagnostic (2026-07-31, Antonio, screenshot: ChatGPT badge
+        # floating disconnected mid-box instead of next to "High" -- the
+        # same "no row found" gap _below_toolbar_cluster_left already had
+        # a diagnostic for, this function didn't yet). Real evidence
+        # beats another guess.
+        log(f"toolbar_cluster_left: no row found (base={base.left},{base.top},"
+            f"{base.right},{base.bottom} raw_right={raw_right} y_ref={y_ref})")
+        return None
+    candidates = []
+    _walk_toolbar_children(row, raw_right, y_ref, candidates, depth=0)
+    if split_left_right:
+        try:
+            rr = row.BoundingRectangle
+            row_mid_x = (rr.left + rr.right) // 2
+            candidates = [c for c in candidates if c[0] >= row_mid_x]
+        except Exception:
+            pass
+    if not candidates:
+        try:
+            rr = row.BoundingRectangle
+            row_desc = (rr.left, rr.top, rr.right, rr.bottom)
+        except Exception:
+            row_desc = None
+        log(f"toolbar_cluster_left: row found but no candidates -- "
+            f"row={row_desc} y_ref={y_ref}")
+        return None
+    left_x = min(c[0] for c in candidates)
+    row_top = min(c[1] for c in candidates)
+    row_bottom = max(c[2] for c in candidates)
+    # Diagnostic (2026-07-30, Claude still landing wrong after the denylist
+    # widening): real candidate data beats another guess. Every real open
+    # of a BADGE_WIDEN_RIGHT_SITES composer logs this, not rate-limited --
+    # same reasoning as the card _finalize diagnostic elsewhere, this is
+    # tied to a real position change (the caller's own dedupe), not a
+    # per-tick spam risk.
+    log(f"toolbar_cluster_left candidates: {candidates}")
+    return left_x, row_top, row_bottom
+
+
+def _claude_inline_send_button(control):
+    """Some Claude composer layouts (the Cowork/project view, confirmed
+    live via a real structure dump, 2026-07-30) pin a 'Send' ButtonControl
+    as a close SIBLING of the composer's own small wrapper, just 1-3
+    ancestor levels up -- real data: node=('GroupControl', (676,945,
+    1444,989)) children=[('GroupControl','Prompt',(676,945,1406,989)),
+    ('StatusBarControl','',...), ('ButtonControl','Send',(1410,955,1434,
+    979))]. NOT reached through the below-row toolbar walk
+    _below_toolbar_cluster_left uses for the OTHER Claude layout (plain
+    chat, "Opus 4.8 / High"), whose real toolbar sits several levels
+    further down a separate branch entirely -- these are two genuinely
+    different structures behind the same app_label, not one bug.
+
+    Real ask 2026-07-30 (Antonio, screenshot): dock next to THIS arrow for
+    this layout, and since it's pinned to the composer's own small
+    fixed-height wrapper rather than the growing text area, returning the
+    button's own rect directly (not derived from the text control's height
+    at all) means the badge naturally stays put as the box grows -- "while
+    it grows it stays there," for free, no extra tracking needed.
+
+    Returns None if no plausible Send-like button is found within 3
+    levels, so the caller falls back to _below_toolbar_cluster_left
+    instead of mis-anchoring on a layout this doesn't recognize."""
+    # Real bug found live 2026-08-02 (Antonio, screenshot: plain chat's
+    # "Sonnet 5" badge suddenly landing on top of the mic icon, right after
+    # a Cowork-only gap constant was retuned -- a change to ONE layout's
+    # spacing should never have been able to move the OTHER). Root cause:
+    # this function was never actually scoped to Cowork specifically, it
+    # matched ANY "Send"/"submit"-named button within 3 ancestor levels,
+    # and plain chat apparently has one reachable there too -- so plain
+    # chat was silently riding this function's result (and
+    # CLAUDE_INLINE_SEND_EXTRA_GAP) the whole time instead of its own
+    # properly-tuned BADGE_TOOLBAR_GAP_OVERRIDES path, just close enough
+    # at the old gap value (40) to go unnoticed until the gap shrank to 0.
+    # Real fix: the docstring's own captured Cowork structure shows the
+    # Send button sitting alongside a StatusBarControl SIBLING -- a marker
+    # plain chat's own layout doesn't have. Require both in the same
+    # parent's children, not just the button alone, so this can only match
+    # the actual Cowork structure it was built for.
+    try:
+        node = control
+        for _ in range(3):
+            try:
+                node = node.GetParentControl()
+            except Exception:
+                break
+            if node is None:
+                break
+            try:
+                child = node.GetFirstChildControl()
+            except Exception:
+                continue
+            n = 0
+            send_rect = None
+            has_status_bar = False
+            while child is not None and n < 20:
+                try:
+                    ctype = child.ControlTypeName
+                    if ctype == "StatusBarControl":
+                        has_status_bar = True
+                    elif ctype == "ButtonControl":
+                        name = (child.Name or "").lower()
+                        if "send" in name or "submit" in name:
+                            r = child.BoundingRectangle
+                            if r.right > r.left and r.bottom > r.top:
+                                send_rect = (r.left, r.top, r.bottom)
+                except Exception:
+                    pass
+                child = _safe_next_sibling(child)
+                n += 1
+            if send_rect is not None and has_status_bar:
+                return send_rect
+    except Exception:
+        pass
+    return None
+
+
+def _below_toolbar_cluster_left(control, raw_bottom):
+    """Real left edge of the toolbar cluster's RIGHT-hand group (model-picker
+    dropdown, mic, submit) in a below-the-text-row toolbar layout, for sites
+    whose toolbar is a full row stacked below the input rather than beside
+    it (see BADGE_WIDEN_DOWN_SITES) -- e.g. Perplexity's "Model" dropdown +
+    mic + submit arrow, sitting below a separate LEFT-hand group (+, Search
+    picker, Computer picker) in that same below-row.
+
+    Real ask 2026-07-30 (Antonio, screenshot): move the badge off its old
+    spot crowded between the mic icon and the submit arrow, to sit before
+    the "Model" dropdown instead -- explicitly confirmed as the intended
+    target over keeping it near submit with just tighter spacing.
+
+    Mirrors _toolbar_cluster_left's two-stage approach (find the row via a
+    bounded ancestor walk, then walk its children for real controls), but
+    the ancestor gate is _input_box_bottom's (same COLUMN, widened BOTTOM)
+    since this row is stacked below, not beside. The child scan reuses
+    _walk_toolbar_children as-is, just fed the below-row's OWN horizontal
+    midpoint (instead of raw_right) and OWN vertical band (instead of the
+    text row's mid_y) -- that function's existing "left edge past this X,
+    roughly level with this Y" gate happens to be exactly what's needed
+    here too, just measured against a different row. Passing the row's own
+    midpoint as the left-edge cutoff is what separates the LEFT-hand group
+    (+/Search/Computer) from the RIGHT-hand one (Model/mic/submit) instead
+    of returning the "+" button as the leftmost control in the whole row.
+
+    Real caveat, unlike _toolbar_cluster_left: that function was written
+    and then corrected once against real ChatGPT/Gemini screenshots. This
+    one hasn't been -- it's a same-pattern extension to a differently
+    shaped layout, not yet confirmed against a real debug.log line the way
+    every other badge-position fix in this file was before being trusted.
+
+    Real bug confirmed live 2026-07-30 (Antonio, screenshot, right after the
+    first version of this function shipped): the horizontal anchor landed
+    correctly, but the badge floated ABOVE the Model/mic/submit row instead
+    of sitting inline with it -- "the badge should be inline with the rest
+    of the tools." Root cause: _position_for's vertical centring uses the
+    whole box's top..bottom, which for BADGE_TOOLBAR_BELOW_SITES spans the
+    text row PLUS this below-row toolbar combined (see
+    BADGE_WIDEN_DOWN_SITES), so its centre sits well above this row's own
+    centre whenever the text row is tall. Returning this row's own
+    top/bottom alongside the X, so the caller can centre on the ROW instead
+    of the whole box, same as an inline (BADGE_WIDEN_RIGHT_SITES) toolbar
+    already gets for free since there the row IS the whole box.
+
+    Returns None if no row or no plausible right-half control is found, so
+    the caller falls back to the older widened-edge/inset math instead of
+    mis-anchoring on a layout this doesn't recognize. Otherwise returns
+    (left_x, row_top, row_bottom)."""
+    try:
+        base = control.BoundingRectangle
+    except Exception:
+        return None
+    mid_x = (base.left + base.right) // 2
+    base_w = base.right - base.left
+    row = None
+    node = control
+    # Real bug found live 2026-08-03 (Antonio, screenshots: Copilot's
+    # composer, badge floating fully disconnected -- traced to debug.log
+    # showing "no row found" every tick). Root cause, confirmed via a
+    # live UIA diagnostic full ancestor+descendant dump: Copilot's real
+    # toolbar row (Attach/Response-mode/Submit) sits 7 ancestor levels up
+    # from the focused text control, but this loop only ever climbed 6 --
+    # one level short of ever reaching it at all, so `row` stayed None no
+    # matter what the candidate/delta checks below would have found.
+    # Every other below-row site (Claude, ChatGPT, Perplexity, Grok,
+    # DeepSeek) already finds its real row within 6 levels and `break`s
+    # there, so raising the ceiling can't change any of their already-
+    # confirmed behavior -- it only matters for a site that needed to
+    # climb further than anything seen before Copilot. 6 -> 9, a few
+    # levels of headroom past the 7 actually measured.
+    for _ in range(9):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            break
+        if node is None:
+            break
+        try:
+            r = node.BoundingRectangle
+        except Exception:
+            continue
+        # Real bug found live 2026-07-31 (Antonio, screenshot + diagnostic:
+        # badge landed on the submit button, "row found but no candidates"
+        # logged row=(444,-152016,2241,1464) -- a UIA staleness glitch, the
+        # accessibility node got queried mid-re-render and returned
+        # garbage coordinates, not a real screen position). A row this
+        # broken still happened to satisfy the other three gates below (a
+        # 153480px-tall rect easily clears "same column"), so it got
+        # trusted as real, then correctly found zero real children inside
+        # something that doesn't actually exist on screen. Same fail-safe
+        # spirit as the raw_rect degenerate-size check elsewhere in this
+        # file: reject a candidate whose own geometry is nonsensical
+        # BEFORE it can ever become `row`, so a glitched tick correctly
+        # falls through to the caller's existing locked-position debounce
+        # instead of a bogus row silently eating the whole detection.
+        sane_height = 0 < (r.bottom - r.top) <= 5000
+        sane_coords = -10000 <= r.top <= 10000 and -10000 <= r.bottom <= 10000
+        if not (sane_height and sane_coords):
+            continue
+        delta = r.bottom - raw_bottom
+        same_column = (r.left <= mid_x <= r.right)
+        reasonable_width = (r.right - r.left) <= base_w * 4 + 200
+        # Real bug found live 2026-08-03 (Antonio, screenshot: Grok's
+        # plain single-line Home composer, badge falling all the way back
+        # to the crude whole-box-centred fallback, "still near the bottom
+        # of the chatbox"). Root cause, confirmed via a live UIA
+        # diagnostic dump: the real toolbar-containing ancestor sits at
+        # delta=16, just 4px under this floor -- the very next ancestor
+        # jumps straight to delta=270, so nothing in between ever
+        # qualified and _below_toolbar_cluster_left returned None
+        # entirely ("no row found" in debug.log, every single tick).
+        # Grok's composer is simply more compact than the sites this 20px
+        # floor was originally sized against. Safe to loosen now that the
+        # REAL correctness guards are the content checks below (must have
+        # real candidates, and the row can't sit above the text's own
+        # bottom) -- this floor was never the only thing standing between
+        # a false match and a true one, just an extra sanity margin. 10
+        # still excludes the near-zero-delta case (the text line's own
+        # immediate CSS wrapper) the floor originally existed to reject.
+        if 10 <= delta <= 200 and same_column and reasonable_width:
+            # Real bug found live 2026-08-03 (Antonio, "you didnt fix it at
+            # all" -- the Code/"Accept edits" composer's badge, traced to
+            # toolbar_left=None entirely: "row found but no candidates --
+            # row=(296,177,1910,1032)", a container spanning nearly the
+            # WHOLE screen). First attempt at a fix: stop at the first
+            # geometrically-plausible ancestor instead of letting a later,
+            # wider one silently overwrite it. That broke a DIFFERENT,
+            # equally real composer (Antonio, next message, same day: the
+            # badge landed on/covering a real button on the Cowork home
+            # composer) -- root cause found via a fresh diag dump: that
+            # composer's IMMEDIATE parent (787,491,1429,543, just the edit
+            # row's own wrapper) also passes these geometric gates but
+            # contains no real toolbar children at all, because the actual
+            # toolbar is a SIBLING group one level further up (787,554,
+            # 1429,587), not a descendant of this parent. Stopping at the
+            # first geometric match froze out ever reaching that correct
+            # grandparent. Neither "always take the first match" nor
+            # "always take the last" is right -- what actually matters is
+            # whether an ancestor's subtree contains a REAL toolbar, so
+            # check that directly: try _walk_toolbar_children on each
+            # candidate as it's found, and stop at the first one that
+            # actually yields real candidates. This still can't regress
+            # back to the original giant-container bug, because that
+            # container had zero real candidates in it either -- it never
+            # would have passed this check.
+            try:
+                row_mid_x = (r.left + r.right) // 2
+                row_mid_y = (raw_bottom + r.bottom) // 2
+                candidates = []
+                _walk_toolbar_children(node, row_mid_x, row_mid_y, candidates, depth=0)
+            except Exception:
+                candidates = []
+            # Reverted 2026-08-03 -- this "row_top can never be above
+            # raw_bottom" check was added the same day to reject a
+            # spurious Grok candidate (row_top=496 vs raw_bottom=531), but
+            # a deeper live UIA diagnostic (full descendant dump, not just
+            # the single candidate log line) proved the premise itself
+            # wrong: Grok's REAL toolbar buttons (Dictation, Submit)
+            # legitimately sit at y=427 while the text control's own
+            # reported bottom is y=461 -- the toolbar visually overlaps
+            # UP into the text's own vertical band in this composer's
+            # compact flex layout, not stacked strictly below it with a
+            # clean gap. This check was rejecting the real, correct
+            # toolbar every time, which is what actually caused the badge
+            # to go completely off the rails right after it shipped
+            # (Antonio: "What the hell is this"). The "must have real
+            # candidates" check above is the real, still-valid guard;
+            # this extra one was never a safe general rule.
+            if candidates:
+                row = node
+                break
+    if row is None:
+        # Diagnostic (2026-07-31, Antonio, screenshot: badge landed on the
+        # submit button -- toolbar_left=None -- on a composer whose "Send"
+        # button also wasn't found by _claude_inline_send_button within
+        # its 3-level search). Real evidence beats another guess: log
+        # exactly what this ancestor walk had to work with when it comes
+        # up completely empty, not just that it did.
+        log(f"below_toolbar_cluster_left: no row found (base={base.left},{base.top},"
+            f"{base.right},{base.bottom} raw_bottom={raw_bottom} mid_x={mid_x})")
+        return None
+    # Real fix 2026-07-30, same root cause as _toolbar_cluster_left's own
+    # comment: row_rect (the loosely-matched ANCESTOR's own bounding box)
+    # routinely extends well above the visible toolbar -- confirmed live on
+    # Perplexity, an ancestor spanning ~120px for a toolbar only ~50px
+    # tall. Derive the row's vertical span from the real CHILD controls
+    # found above instead of trusting the ancestor's own rect.
+    left_x = min(c[0] for c in candidates)
+    row_top = min(c[1] for c in candidates)
+    row_bottom = max(c[2] for c in candidates)
+    log(f"below_toolbar_cluster_left candidates: {candidates}")
+    return left_x, row_top, row_bottom
+
+
+def _claude_code_review_row(control):
+    """True when the focused composer belongs to claude.ai/code (Sonnet 5
+    default model) rather than plain chat/Cowork (Opus 4.8 default) -- see
+    CLAUDE_CODE_REVIEW_GAP's own comment for why that distinction matters
+    even though both share the same below-row detector and land on a
+    similarly-positioned anchor.
+
+    Real bug found live 2026-08-03 (Antonio, screenshot: the dead-centre
+    floating badge was BACK on a Code-tab composer, right after this
+    function's first version shipped and was confirmed fixed). Root
+    cause: that first version only checked for "Accept edits", the
+    label shown ONLY while reviewing a pending diff -- this screenshot
+    was the SAME composer in its other common state, showing "Auto"
+    instead (nothing pending to accept), so the check never fired and
+    it silently fell back to the wrong (plain-chat) gap again. Checking
+    both covers the two known Code-tab left-cluster states.
+
+    Deliberately NOT keyed off the model name ("Sonnet 5" vs "Opus
+    4.8") -- tried that first, then caught it live via a fresh
+    reproduction before shipping: plain Chat's own home screen can
+    default to "Sonnet 5" too depending on the user's last-picked
+    model, which has nothing to do with which tab it's in. Model choice
+    is independent of surface; these left-cluster labels are the real,
+    surface-specific signal."""
+    node = control
+    for _ in range(6):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return False
+        if node is None:
+            return False
+        if (_has_named_descendant(node, "accept edits", depth=3)
+                or _has_named_descendant(node, "auto", depth=3)):
+            return True
+    return False
+
+
+def _claude_home_row(control):
+    """True when the focused composer is the top-level Home "How can I
+    help you today?" box (Chat/Cowork toggle visible) rather than a real,
+    already-started conversation's composer -- both route through
+    below_toolbar_cluster_left and land on a similarly-shaped anchor near
+    the model picker, so both were sharing BADGE_TOOLBAR_GAP_OVERRIDES
+    (210px). Real bug found live 2026-08-03 (Antonio, screenshot: badge
+    landing right after the "Cowork" toggle button, nowhere near "Sonnet
+    5"/"Opus 4.8" -- confirmed via a live claude.ai/new reproduction that
+    the detected anchor (~1237) is already almost ON TOP of the model
+    button's own left edge (measured ~1225), not 200px+ before it like
+    the mid-conversation composer's Send-button-plus-label case this
+    override was tuned for. 210px massively overshoots here, landing the
+    badge back near the LEFT-hand Chat/Cowork cluster instead. "Cowork"
+    is the one real, stable, UIA-visible marker unique to this composer
+    (a real conversation's composer never shows the mode toggle), so
+    detected the same way as _claude_code_review_row's own markers."""
+    node = control
+    for _ in range(6):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return False
+        if node is None:
+            return False
+        if _has_named_descendant(node, "cowork", depth=4):
+            return True
+    return False
+
+
+def _perplexity_long_model_row(control):
+    """True when Perplexity's composer has a longer model name selected
+    ("Orchestrator" specifically, the Computer/task mode's model) that
+    reaches all the way to the detected toolbar anchor, rather than the
+    plain search composer's shorter default name that already fits with
+    zero extra gap.
+
+    Real bug found live 2026-08-03 (Antonio, screenshot, right before
+    finalizing the "Perplexity is perfect, lock it" ask: badge overlapping
+    "Orchestrator" in the Computer-task composer). The plain composer was
+    genuinely confirmed correct with zero override -- this isn't a
+    different composer STRUCTURE, the toolbar-row detection is identical,
+    it's a longer label eating into the same fixed gap a short label
+    like the default one never needed. Scoped to "Orchestrator"
+    specifically (not a blanket per-site override) so the already-locked
+    short-name case can never regress. Still used as the GATE for
+    PERPLEXITY_COMPUTER_ANCHOR below, even though the anchor itself no
+    longer depends on the model name -- keeps the plain composer
+    untouched, only switches anchor when this specific case is active."""
+    node = control
+    for _ in range(6):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return False
+        if node is None:
+            return False
+        if _has_named_descendant(node, "orchestrator", depth=4):
+            return True
+    return False
+
+
+def _perplexity_computer_anchor(control):
+    """Right edge of the "Computer" mode-toggle button, or None. Real ask
+    2026-08-03 (Antonio, live, right after confirming a dynamic per-
+    model-name-width fix isn't possible -- see PERPLEXITY_LONG_MODEL_GAP's
+    own comment, a live diagnostic confirmed the "Model" button's
+    accessible Name is just the literal string 'Model', never the actual
+    selected model text, and its own bounding rect doesn't track the
+    rendered text width either): "Maybe you can put it to the right of
+    the computer badge rather than the next to the prompt names because
+    they can expand and shrink based on the names." "Computer" is its own
+    fixed, always-the-same-width label (confirmed live: rect=(914,558,
+    1023,591), a real child TextControl reading 'Computer' -- unlike
+    "Model", this one's Name genuinely IS its stable visible text), so
+    anchoring off IT instead of the variable-width model button makes the
+    badge immune to however long the selected model's name is, without
+    needing to special-case each one by name."""
+    node = control
+    for _ in range(6):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return None
+        if node is None:
+            return None
+        rect = _find_named_descendant_rect(node, "computer", depth=4)
+        if rect is not None:
+            return rect.right
+    return None
+
+
+def _find_named_descendant_rect(node, name_lower, depth):
+    if depth < 0:
+        return None
+    try:
+        child = node.GetFirstChildControl()
+    except Exception:
+        return None
+    while child is not None:
+        try:
+            if child.Name.strip().lower() == name_lower:
+                return child.BoundingRectangle
+        except Exception:
+            pass
+        found = _find_named_descendant_rect(child, name_lower, depth - 1)
+        if found is not None:
+            return found
+        try:
+            child = child.GetNextSiblingControl()
+        except Exception:
+            break
+    return None
+
+
+def _has_named_descendant(node, name_lower, depth):
+    if depth < 0:
+        return False
+    try:
+        child = node.GetFirstChildControl()
+    except Exception:
+        return False
+    while child is not None:
+        try:
+            if child.Name.strip().lower() == name_lower:
+                return True
+        except Exception:
+            pass
+        if _has_named_descendant(child, name_lower, depth - 1):
+            return True
+        try:
+            child = child.GetNextSiblingControl()
+        except Exception:
+            break
+    return False
+
+
 class PersistentBadge:
     """The always-on indicator, anchored to whatever text field currently has
     focus, same idea as Grammarly's little circular icon that's just always
@@ -3933,6 +6149,13 @@ class PersistentBadge:
         # the app window, not on the badge's own topmost floating window
         # (see current_box_rect).
         self._last_box_rect = None
+        # Which recognized LLM app/site the badge is currently anchored to
+        # (see show_near), so _position_for can look up a per-site inset
+        # override (BADGE_INSIDE_INSET_OVERRIDES) without needing every
+        # caller of _position_for/popup_anchor to thread app_label through
+        # separately -- popup_anchor picks this up for free since it reads
+        # the same instance state show_near just set.
+        self._current_app_label = None
 
     def _ensure_window(self):
         if self.window is not None:
@@ -3943,11 +6166,13 @@ class PersistentBadge:
         # withdrawn main Tk root -- tying a transient window to a withdrawn
         # owner stopped this window from ever showing at all (real
         # regression, caught immediately: "the pop up on the chat box isn't
-        # showing up"). Reverted; the SWP_FRAMECHANGED refresh in
-        # make_window_non_activating is the safer half of that fix and
-        # stays. Do not re-add transient() against self.root specifically
-        # without first un-withdrawing it or transienting against some
-        # other, actually-visible window.
+        # showing up"). Do not re-add .transient() against self.root.
+        # FIXED 2026-07-27 a different way instead: make_window_non_activating
+        # below is now passed owner=self.root, which sets the real Win32
+        # owner directly via SetWindowLongPtrW/GWLP_HWNDPARENT, bypassing
+        # Tk's own .transient() bookkeeping (and the withdrawn-owner
+        # auto-hide behavior that lives inside it) entirely. See that
+        # function's docstring.
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BRAND_DARK)
@@ -3986,7 +6211,7 @@ class PersistentBadge:
             widget.bind("<ButtonRelease-1>", self._on_drag_end)
 
         win.update_idletasks()
-        make_window_non_activating(win)
+        make_window_non_activating(win, owner=self.root)
         # Real bug found 2026-07-26: WS_EX_TOOLWINDOW (set above) is meant to
         # keep this window out of the taskbar entirely, but if a taskbar
         # entry shows up anyway on some Windows configs, it fell back to the
@@ -4075,10 +6300,12 @@ class PersistentBadge:
                     f"review yet, needs at least {MIN_TEXT_LENGTH_TO_ANALYZE} characters")
 
     def _position_for(self, rect):
-        """The badge position: INSIDE the focused box, tucked against its
-        own right edge, vertically centred, same inset every time. Single
-        source of truth so the review card can be anchored to it
-        consistently (see popup_anchor).
+        """The badge position: INSIDE the focused box, vertically centred.
+        Tucked against the real inline toolbar cluster's left edge when one
+        was found (rect.toolbar_left, see _toolbar_cluster_left), otherwise
+        against the box's own right edge with a fixed inset. Single source
+        of truth so the review card can be anchored to it consistently (see
+        popup_anchor).
 
         Real ask 2026-07-25 (Antonio, direct: "Grammarly's icon sits within
         the chat box itself, but to the right... I think that's what we
@@ -4103,11 +6330,79 @@ class PersistentBadge:
         search engine's box, etc. never reach here at all."""
         width = rect.right - rect.left
         if width >= 100:
-            # A real box rect: tuck inside its own right edge, vertically
-            # centred, same small inset every time.
             box_h = rect.bottom - rect.top
-            bx = rect.right - BADGE_ICON_SIZE - BADGE_INSIDE_INSET
-            by = rect.top + box_h // 2 - BADGE_ICON_SIZE // 2
+            toolbar_left = getattr(rect, "toolbar_left", None)
+            if toolbar_left is not None:
+                # Precise anchor (2026-07-30, see _toolbar_cluster_left):
+                # dock just left of the real toolbar cluster (model-picker
+                # dropdown, mic, submit) itself, rather than guess a pixel
+                # distance from the row's edge -- this already IS the exact
+                # spot Antonio asked for, so no further inset on top, EXCEPT
+                # where the specific layout detected has an element the
+                # toolbar detector can never find (see rect.toolbar_
+                # extra_gap and BADGE_TOOLBAR_GAP_OVERRIDES -- set per
+                # detection path, not blanket per-site, so this can't
+                # misapply to a different layout on the same site).
+                gap = BADGE_TOOLBAR_GAP + getattr(rect, "toolbar_extra_gap", 0)
+                bx = toolbar_left - gap - BADGE_ICON_SIZE
+            else:
+                # Fallback: tuck inside the box's own (possibly widened,
+                # see BADGE_WIDEN_RIGHT_SITES) right edge, vertically
+                # centred, base inset plus a per-site top-up -- see
+                # BADGE_INSIDE_INSET_OVERRIDES. Only still reached when
+                # _toolbar_cluster_left couldn't find a real toolbar control
+                # to anchor to (an unrecognized layout), or for sites that
+                # were never widened in the first place.
+                inset = BADGE_INSIDE_INSET + BADGE_INSIDE_INSET_OVERRIDES.get(self._current_app_label, 0)
+                bx = rect.right - BADGE_ICON_SIZE - inset
+            row_top = getattr(rect, "toolbar_row_top", None)
+            row_bottom = getattr(rect, "toolbar_row_bottom", None)
+            if row_top is not None and row_bottom is not None:
+                # Below-row toolbar layout (2026-07-30, see
+                # _below_toolbar_cluster_left): centre on the TOOLBAR ROW
+                # itself, not the whole (widened) box -- "the badge should
+                # be inline with the rest of the tools," confirmed live
+                # after the box-centred version floated it above the row.
+                by = row_top + (row_bottom - row_top) // 2 - BADGE_ICON_SIZE // 2
+                vshift = getattr(rect, "toolbar_row_vshift", 0)
+                by -= vshift
+                # Real bug found live 2026-08-03 (Antonio, screenshot +
+                # exact debug.log correlation: Claude's "Code" browser
+                # view, badge sitting visibly below the box's own rounded
+                # border). Root cause, measured not guessed: the detected
+                # row's own bottom can land a few px PAST the outer box's
+                # own (separately, widened) bottom -- confirmed live,
+                # row_bottom=1026 vs rect.bottom=1023, a real 3px mismatch
+                # between two independently-derived values. The badge is
+                # taller than a typical toolbar row, so centering on a
+                # short row that itself already overhangs the box pushes
+                # the badge's own bottom edge further past the box's real
+                # border on top of that (measured: 1031 vs 1023, 8px
+                # over). Clamp to the box's OWN bounds as the final,
+                # authoritative edge -- the badge must never render
+                # outside the box it's supposed to be docked inside,
+                # regardless of a small mismatch between two internal
+                # measurements of where "the bottom" is.
+                #
+                # Real bug found live 2026-08-03 (Antonio, Gemini's Home
+                # composer: "It looks as if you moved it down" right after
+                # GEMINI_VSHIFT shipped). Root cause: the row-centred `by`
+                # for this composer was ALREADY landing above rect.top
+                # even with zero vshift (confirmed via debug.log: natural
+                # by=557 vs rect.top=564), so the clamp below was already
+                # silently absorbing the entire vshift -- 557-10=547 still
+                # clamps to 564, IDENTICAL to no vshift at all. A vshift
+                # is a deliberate "go higher than the naive row-centre"
+                # ask; the clamp's own job is only to stop the badge
+                # rendering outside the visual box by ACCIDENT, not to
+                # silently cancel an intentional shift. Loosen the top
+                # bound by the same vshift so the two stop fighting -- the
+                # box_bottom-widening fix above is the exact same idea,
+                # just for the other edge.
+                top_bound = rect.top - max(0, vshift)
+                by = max(top_bound, min(by, rect.bottom - BADGE_ICON_SIZE))
+            else:
+                by = rect.top + box_h // 2 - BADGE_ICON_SIZE // 2
         else:
             # No real box rect (Claude's Electron composer exposes none),
             # just a caret/click point: the fallback that builds this
@@ -4213,8 +6508,11 @@ class PersistentBadge:
         card_x = bx + BADGE_ICON_SIZE - POPUP_WIDTH if corner == "right" else bx
         return (card_x, by + BADGE_ICON_SIZE + 10)
 
-    def show_near(self, rect, suggestion_count, checked=True):
+    def show_near(self, rect, suggestion_count, checked=True, app_label=None):
         self._ensure_window()
+        # Which recognized app/site this box belongs to, so _position_for can
+        # look up a per-site inset override (BADGE_INSIDE_INSET_OVERRIDES).
+        self._current_app_label = app_label
         # Real ask 2026-07-20: the suggestion count is shown as a green->red
         # heat dot on the logo, not a number.
         self._update_heat(suggestion_count, checked=checked)
@@ -4609,7 +6907,9 @@ class SuggestionPopup:
         # REVERTED 2026-07-26: same regression as the badge window's
         # identical change (see its comment) -- .transient(self.root)
         # against the hidden, withdrawn main root stopped this window from
-        # showing at all. Reverted.
+        # showing at all. FIXED 2026-07-27 the same way as the badge window
+        # too -- see the owner=self.root argument below and
+        # make_window_non_activating's docstring.
         # Built hidden, then shown in _finalize. make_window_non_activating
         # has to realize the window to work at all (see its docstring), and
         # doing that while visible would flash an empty card at the wrong
@@ -4618,7 +6918,7 @@ class SuggestionPopup:
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=POPUP_BORDER)  # acts as a 1px border via padding below
-        make_window_non_activating(win)
+        make_window_non_activating(win, owner=self.root)
         # Same belt-and-suspenders fix as the badge window (2026-07-26): if a
         # taskbar entry appears despite WS_EX_TOOLWINDOW, it must never show
         # the default Tk/Tcl feather icon instead of the real logo.
@@ -4761,7 +7061,31 @@ class SuggestionPopup:
                 px = bx + bw // 2 - POPUP_WIDTH
             else:
                 px = bx + bw // 2
-            py = by + bh // 2 - height
+            host = _host_window_rect(anchor_x, anchor_y)
+            # Real bug confirmed live 2026-07-30 (Antonio, screenshots +
+            # direct: "the placement when it's [a taller card, e.g. 3
+            # fixes] is bad and not corrected to the correct area"): this
+            # always opened ABOVE the badge (card's bottom edge at the
+            # badge's centre). A short card (1-2 fixes) fits above almost
+            # any badge position, so this looked fine -- but a taller card
+            # (more fixes, or Step 2 also showing) on a badge sitting
+            # mid-screen routinely doesn't fit above at all, went negative,
+            # and got clamped straight to the HOST WINDOW'S TOP -- stranding
+            # the card far from the badge instead of anywhere near it.
+            # Flip below the badge instead (top edge at the badge centre)
+            # whenever there's genuinely more room below than above --
+            # still not a perfect docked connection (the gap-punch notch is
+            # bottom-only, see _punch_gap, so this still reads as
+            # disconnected up close, same as any other clamped open below),
+            # but "right below the badge" reads as connected at a glance;
+            # "at the top of the screen" does not.
+            flipped = False
+            if host is not None:
+                space_above = by - host[1]
+                space_below = host[3] - (by + bh)
+                if height > space_above and space_below > space_above:
+                    flipped = True
+            py = (by + bh // 2) if flipped else (by + bh // 2 - height)
             pre_clamp = (px, py)
             px, py = fit_within_window_and_monitor(
                 px, py, POPUP_WIDTH, height, anchor_x, anchor_y)
@@ -4775,21 +7099,23 @@ class SuggestionPopup:
             clamped = (px, py) != pre_clamp
             log(f"card _finalize: badge=({bx},{by},{bw},{bh}) "
                 f"box_rect={(box.left, box.top, box.right, box.bottom) if box is not None else None} "
-                f"anchor=({anchor_x:.0f},{anchor_y:.0f}) corner={corner} "
-                f"pre_clamp={pre_clamp} host_window={_host_window_rect(anchor_x, anchor_y)} "
+                f"anchor=({anchor_x:.0f},{anchor_y:.0f}) corner={corner} flipped={flipped} "
+                f"pre_clamp={pre_clamp} host_window={host} "
                 f"final=({px:.0f},{py:.0f}) clamped={clamped}")
-            self._anchor_edge = "bottom"   # bottom (badge) edge fixed on resize
-            # Skip the badge-docking notch entirely when the clamp above had
-            # to move the card away from its badge-anchored position (real
-            # ask 2026-07-25: an over-constrained screen -- box too close to
-            # BOTH edges for the 560px card to fit either way -- would
-            # otherwise punch a circular hole in a card corner the badge no
-            # longer actually sits behind, showing raw background through
-            # it instead of the badge. _card_corner's own room check (now
-            # fixed to match this exact math, see its docstring) means this
-            # should be rare, not the common case -- a plain corner in that
-            # rare case reads as "no special treatment here," not broken.
-            self._gap_bw = None if clamped else bw
+            self._anchor_edge = "top" if flipped else "bottom"
+            # Skip the badge-docking notch entirely when flipped (wrong
+            # corner for it, see _punch_gap -- always punches at the
+            # BOTTOM) or when the clamp above still had to move the card
+            # away from its badge-anchored position (real ask 2026-07-25:
+            # an over-constrained screen -- box too close to BOTH edges for
+            # the 560px card to fit either way -- would otherwise punch a
+            # circular hole in a card corner the badge no longer actually
+            # sits behind, showing raw background through it instead of the
+            # badge). _card_corner's own room check (now fixed to match
+            # this exact math, see its docstring) means the clamped case
+            # should be rare, not the common case -- a plain corner in
+            # either case reads as "no special treatment here," not broken.
+            self._gap_bw = None if (flipped or clamped) else bw
         else:
             # No badge (rare): fall back to the anchored position, grow down.
             px, py = fit_on_one_monitor(self._pos[0], self._pos[1], POPUP_WIDTH, height)
@@ -4856,13 +7182,47 @@ class SuggestionPopup:
         def _wrapped():
             try:
                 btn.config(state="disabled", text=busy_text)
-                btn.update_idletasks()
+                # Real bug found live 2026-07-27 (Antonio, screenshot: a
+                # "Dismiss" ghost fragment reading "iss" left hanging next
+                # to the button). Root cause: this only repainted the ONE
+                # button whose text changed. That's fine on its own, but
+                # Step 1 packs this button and Dismiss side-by-side from
+                # the left, so when this button's text shrinks (e.g.
+                # "Apply 4 fixes" -> "Fixing..."), Dismiss has to physically
+                # shift left to stay adjacent -- a SIBLING widget moving,
+                # not just this one repainting. update_idletasks() on btn
+                # alone doesn't force Windows to repaint the region Dismiss
+                # vacated, leaving a stale fragment of its old position
+                # behind. Step 2's busy button never showed this because
+                # its neighbour is anchored independently from the right,
+                # so nothing has to move when its own text changes.
+                # Fixed generally, not just for Step 1: update the PARENT
+                # row, not just this button, so every sibling that had to
+                # reflow gets a real repaint too.
+                parent.update_idletasks()
             except Exception:
                 pass
             command()
 
         btn.config(command=_wrapped)
         return btn
+
+    def _fixed_width_apply_holder(self, parent, n):
+        """A fixed-size frame for the Step 1 Apply button -- see the real-bug
+        note where this is used (the Dismiss ghost-fragment glitch). Sized
+        in real pixels (font.measure, not Tk's character-count Button width)
+        to the WIDEST label the button can ever show for THIS card instance
+        -- "Apply n fixes" (n is already the max possible tick count) or
+        "Fixing..." -- so its footprint never changes and Dismiss, packed
+        right after it, never has to shift."""
+        fnt = tkfont.Font(family="Segoe UI Semibold", size=self._fs(9))
+        candidates = ["Fixing..."] + [self._fix_btn_label(k) for k in range(1, max(n, 1) + 1)]
+        text_w = max(fnt.measure(t) for t in candidates)
+        w = text_w + S(18) * 2 + S(4)  # match _primary_button's padx, plus a small rounding buffer
+        h = fnt.metrics("linespace") + S(7) * 2 + S(4)  # match _primary_button's pady
+        holder = tk.Frame(parent, width=w, height=h, bg=POPUP_BG)
+        holder.pack_propagate(False)
+        return holder
 
     def _muted_button(self, parent, text, command):
         return tk.Button(
@@ -5259,9 +7619,24 @@ class SuggestionPopup:
             # Apply + Dismiss below the list (mockup layout).
             btnrow = tk.Frame(step1, bg=POPUP_BG)
             btnrow.pack(fill="x", padx=S(18), pady=(S(12), S(0)))
+            # Real bug found live 2026-07-27, and reproduced again 2026-07-30
+            # (Antonio, screenshots both times): a stale "Dismiss" fragment
+            # left hanging when this button's label shrinks (e.g. "Apply 4
+            # fixes" -> "Fixing..."), because Dismiss -- packed right after
+            # it -- has to physically slide left to stay adjacent, and this
+            # window's -transparentcolor attribute doesn't always repaint
+            # the region it vacates. The 2026-07-27 fix (parent.
+            # update_idletasks() in _busy_button) wasn't reliable enough.
+            # Real fix: stop Dismiss from ever having to move. Wrap the
+            # button in a frame sized to the WIDEST label it can ever show
+            # for this card -- "Apply n fixes" or "Fixing..." -- with
+            # pack_propagate off, so the button's own footprint is fixed
+            # for the Fixing transition AND every per-toggle count change.
+            apply_holder = self._fixed_width_apply_holder(btnrow, n)
+            apply_holder.pack(side="left")
             self._apply_btn = self._busy_button(
-                btnrow, self._fix_btn_label(n), _fix_clicked, "Fixing...")
-            self._apply_btn.pack(side="left")
+                apply_holder, self._fix_btn_label(n), _fix_clicked, "Fixing...")
+            self._apply_btn.pack(fill="both", expand=True)
             self._ghost_button(btnrow, "Dismiss", self.dismiss).pack(side="left", padx=(S(6), 0))
             # Reflect the DEFAULT-checked count (Tier 1/2), since Tier 3 rows
             # start unticked.
@@ -6089,27 +8464,11 @@ class SettingsWindow:
     def _render_general(self):
         self._section_header("General")
 
-        row = self._row("Launch on login", "Starts Comprsly automatically when you sign in to Windows")
-        # Initialise from the REAL registry state, not the persisted setting,
-        # so the toggle can never show ON with no Run key behind it (UI-backend
-        # audit 2026-07-22). Reconcile settings.json to match reality.
-        login_active = launch_on_login_is_active()
-        if APP_SETTINGS.get("launch_on_login") != login_active:
-            APP_SETTINGS["launch_on_login"] = login_active
-            save_settings(APP_SETTINGS)
-        login_var = tk.BooleanVar(value=login_active)
-
-        def _toggle_login():
-            ok = set_launch_on_login(login_var.get())
-            if ok:
-                APP_SETTINGS["launch_on_login"] = login_var.get()
-                save_settings(APP_SETTINGS)
-            else:
-                # Registry write failed: snap the toggle back to the TRUE
-                # state so what's shown always matches what's real.
-                login_var.set(launch_on_login_is_active())
-
-        self._toggle(row, login_var, _toggle_login).pack(side="right")
+        # "Launch on login" removed (2026-07-30, Antonio: broken on the
+        # Store/MSIX download -- see webui.py Bridge's matching removal for
+        # the full root cause). set_launch_on_login/launch_on_login_is_active
+        # stay in this file for heal_launch_on_login's sake, only the UI
+        # surface is gone, same scope as the web Settings change.
 
         # Where Comprsly works (2026-07-25: LLM apps only, see the
         # DEFAULT_SETTINGS note on cat_ai_chat). APP_CATEGORIES is down to a
@@ -6132,20 +8491,13 @@ class SettingsWindow:
 
             self._toggle(row, var, _toggle_cat).pack(side="right")
 
-        # Live again as of 2026-07-23: dragging the badge now PINS it to that
-        # spot (see show_near / _on_drag_end), so this row is the way to undo a
-        # pin and return to automatic box-anchored placement. Double-clicking
-        # the badge does the same thing.
-        row = self._row("Badge position", "Reset to automatic placement, undoes any manual drag")
-
-        def _reset_position():
-            try:
-                os.remove(BADGE_POSITION_PATH)
-            except OSError:
-                pass
-            self.badge.user_positioned = None
-
-        self._button(row, "Reset", _reset_position).pack(side="right")
+        # "Badge position: Reset" removed (2026-07-30, same audit as
+        # "Launch on login" above): the badge hasn't been draggable/pinnable
+        # since 2026-07-23 (see PersistentBadge.__init__ -- user_positioned
+        # is never set anymore), so there's never a pinned position left to
+        # reset. The equivalent web Settings control was already removed for
+        # the same reason back on 2026-07-25 (see webui.py Bridge); this Tk
+        # fallback had simply drifted out of sync with that until now.
 
     def _render_rules_ai(self):
         self._section_header("Rules & AI")
@@ -6516,6 +8868,30 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
     # app and back to the SAME LLM doesn't count as a fresh conversation,
     # only switching to a genuinely different LLM does.
     last_real_llm_label = None
+    # Real bug found live 2026-08-02 (Antonio, screenshot: badge landing
+    # on empty space below Claude's "Code" composer, even though the
+    # detection for that exact context was independently confirmed stable
+    # and correct in debug.log). Root-caused via the log itself: real OS
+    # foreground focus was flickering between "Claude" (browser) and
+    # "Claude Code" (a genuinely different window/process, terminal-
+    # classified) every few seconds -- confirmed this isn't a detection
+    # bug, GetForegroundWindow() is truthfully reporting what Windows
+    # itself considers foreground at each moment; a documented, known
+    # mechanism already exists for OS focus shifting unexpectedly (see
+    # get_foreground_window_and_process's own docstring). The REAL bug is
+    # what this app did in response: every single context switch, even a
+    # one-tick blip, unconditionally reset locked_badge_rect to None --
+    # and a None lock skips ALL debounce protection, accepting whatever
+    # that one bad tick computed immediately. So a single flickery tick
+    # into the wrong context was enough to visibly jump the badge, with
+    # none of the position-stability work elsewhere in this file able to
+    # stop it, because it never got a chance to run.
+    # Fix: debounce the CONTEXT switch itself the same way rect changes
+    # already are -- a new context only actually takes effect once it's
+    # been seen on 2 consecutive ticks, so a one-tick flicker is filtered
+    # out at the source instead of being chased downstream.
+    pending_context_label = [None]
+    pending_context_count = [0]
     # The badge re-anchoring to wherever you last clicked made it visibly
     # jump around as you clicked different spots while composing a longer
     # message. Locking it to the first position found per message keeps it
@@ -6555,6 +8931,21 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
     # measuring it) -- this records the actual GetWindowRect result (or its
     # failure) so the real cause is checkable next time, not theorized.
     last_reject_diag = [None]
+    # Rate-limits the "focused control isn't a real composer" line below
+    # (see _NEVER_A_COMPOSER_CONTROL_TYPES) the same way last_reject_diag
+    # does for the off-screen-rect check -- logged on change only, this
+    # loop runs every 0.7s.
+    last_rejected_ctype = [None]
+    # One-shot-per-distinct-composer diagnostic dump for Claude (2026-07-30,
+    # Antonio, screenshot: a DIFFERENT Claude layout -- the Cowork/project
+    # view -- has an inline submit arrow pinned to the composer's own top-
+    # right corner, wants the badge docked THERE, not chasing the separate
+    # "Sonnet 5 / High" row at the bottom the plain chat layout uses. Same
+    # app_label, two different real structures -- rather than guess at this
+    # one's tree shape too, dump it for real evidence first (see the
+    # _NEVER_A_COMPOSER... precedent for "unrecognized browser tab" doing
+    # the same thing).
+    last_claude_diag_key = [None]
     # Real bug found 2026-07-22, confirmed directly in debug.log rather
     # than theorized: ChatGPT's composer sometimes reports two wildly
     # different bounding rects for the exact same accessible name ("Chat
@@ -6567,12 +8958,103 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
     # while still tracking a genuine reflow within about 1.4s.
     pending_rect_tuple = [None]
     pending_rect_count = [0]
+    # Real bug found live 2026-08-02 (Antonio, screenshot: badge frozen at
+    # a stale position while actively typing into Claude's "Code" view,
+    # box visibly grown but badge not following). Root cause: the
+    # confirmation check below used to require the EXACT same rect_tuple
+    # twice in a row -- but a box that's actively growing as text wraps
+    # changes its own bounds almost every single 0.7s tick, so it can
+    # never produce two IDENTICAL readings back to back while the user is
+    # typing. The debounce this exists for (see the comment above, a real
+    # ChatGPT bug: "hundreds of pixels apart for a box that plainly hadn't
+    # moved") was guarding against a WILD single-tick glitch, not a
+    # smoothly growing box -- treating "close enough" as confirmation
+    # keeps the wild-glitch protection (a true misread is still hundreds
+    # of px off, well past this) while letting a real, gradual reflow
+    # actually get confirmed instead of freezing forever.
+    _RECT_CLOSE_TOLERANCE_PX = 40
+
+
+    def _rects_close_enough(a, b):
+        if a is None or b is None:
+            return False
+        return all(abs(x - y) <= _RECT_CLOSE_TOLERANCE_PX for x, y in zip(a, b))
+    # Real bug found live 2026-07-30 (Antonio, screenshot: the badge showing
+    # up bottom-right of a Comprsly-unrelated interactive screen -- a
+    # slider-based scoring tool -- with no chat box anywhere in sight).
+    # app_label only ever says WHICH SITE/app this is, never whether a real
+    # composer is currently reachable on it (see _NEVER_A_COMPOSER_CONTROL_
+    # TYPES's own comment) -- when it isn't, the code below falls through to
+    # either the last locked position or a window-relative GUESS, on the
+    # theory that's just a one-tick blip mid-typing. Fine for a blip; wrong
+    # once it persists, which is exactly what happens on a real non-composer
+    # view of a recognized app (a canvas/custom-UI feature, a settings
+    # screen, anything else that isn't the chat box) -- the badge then just
+    # sits there, guessed or stale, for as long as that view stays open.
+    # Counts consecutive no-real-composer ticks so a sustained one (not a
+    # single blip) can actually hide the badge instead of guessing forever.
+    no_real_composer_ticks = [0]
     # Cache for _input_box_left's parent walk (real ask 2026-07-22): the
     # walk is several UIA round trips, wasteful to repeat every 0.7s tick
     # when the box hasn't moved. Recompute only when the raw control left
     # changes.
     box_left_cache_key = [None]
     box_left_cache_val = [None]
+    # Same caching idea for _input_box_right (see BADGE_WIDEN_RIGHT_SITES).
+    box_right_cache_key = [None]
+    box_right_cache_val = [None]
+    # Same caching idea for _toolbar_cluster_left (2026-07-30).
+    toolbar_left_cache_key = [None]
+    toolbar_left_cache_val = [None]
+    # Same caching idea for _input_box_bottom (see BADGE_WIDEN_DOWN_SITES).
+    box_bottom_cache_key = [None]
+    box_bottom_cache_val = [None]
+    # Same caching idea for _below_toolbar_cluster_left (BADGE_TOOLBAR_BELOW_SITES).
+    below_toolbar_left_cache_key = [None]
+    below_toolbar_left_cache_val = [None]
+    claude_send_btn_cache_key = [None]
+    claude_send_btn_cache_val = [None]
+    # Same caching idea for _claude_code_review_row (2026-08-03, see
+    # CLAUDE_CODE_REVIEW_GAP).
+    claude_code_review_cache_key = [None]
+    claude_code_review_cache_val = [None]
+    # Same caching idea for _claude_home_row (2026-08-03, see
+    # CLAUDE_HOME_ROW_GAP).
+    claude_home_row_cache_key = [None]
+    claude_home_row_cache_val = [None]
+    # Same caching idea for _perplexity_long_model_row (2026-08-03, see
+    # PERPLEXITY_LONG_MODEL_GAP).
+    perplexity_long_model_cache_key = [None]
+    perplexity_long_model_cache_val = [None]
+    # Same caching idea for _perplexity_computer_anchor (2026-08-03, see
+    # PERPLEXITY_COMPUTER_ANCHOR_GAP).
+    perplexity_computer_anchor_cache_key = [None]
+    perplexity_computer_anchor_cache_val = [None]
+    # Same caching idea for Gemini's below-row fallback (2026-08-03, see
+    # its own call-site comment).
+    gemini_below_cache_key = [None]
+    gemini_below_cache_val = [None]
+    # Same caching idea for the Claude same-row home-composer fallback
+    # (2026-08-03, see its own call-site comment).
+    claude_same_row_cache_key = [None]
+    claude_same_row_cache_val = [None]
+    # Real bug found live 2026-08-02 (Antonio, screenshots: ChatGPT badge
+    # landing well below the visible box on a short single-line composer,
+    # reliably, every time). First hypothesis -- a transient UIA read
+    # glitch mid-React-re-render -- was checked directly against a live
+    # diagnostic and DISPROVEN: the same exact composer state failed on
+    # every one of 3 separate attempts, never once succeeding, which isn't
+    # what a one-tick glitch looks like. The real cause (found via a live
+    # getBoundingClientRect() measurement of the actual ChatGPT page, see
+    # the ChatGPT-specific fallback below) is structural: ChatGPT's toolbar
+    # sits INLINE with the text for a single-line message, not below it,
+    # so the below-row search this cache backs up never had anything to
+    # find there in the first place. Kept anyway as a general safety net --
+    # a real transient miss on any BADGE_TOOLBAR_BELOW_SITES app is still
+    # possible in principle, and remembering the last good reading instead
+    # of trusting a crude fallback immediately can't make a correct read
+    # worse, it can only help a genuinely-transient future case.
+    last_good_below_toolbar_result = {}
     log("watch_loop started")
 
     while True:
@@ -6800,17 +9282,19 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     # could ever catch it, guessing wouldn't fix it. Same
                     # policy as the unverified Perplexity/Copilot hints
                     # above: log the focused control's CLASS and accessible
-                    # NAME (structural UI labels, never typed content, same
-                    # privacy standard as the badge-rect logging elsewhere)
-                    # so the real composer identity can be read from
-                    # debug.log instead of guessed at twice.
+                    # NAME (structural UI labels, never typed content --
+                    # length-capped via _safe_diag_name as a backstop, see
+                    # its own comment: this assumption was caught live
+                    # being WRONG for at least one real app) so the real
+                    # composer identity can be read from debug.log instead
+                    # of guessed at twice.
                     if process_name in BROWSER_PROCESS_NAMES:
                         try:
                             diag_ctrl = auto.GetFocusedControl()
                             if diag_ctrl is not None:
                                 log(f"unrecognized browser tab, focused control: "
                                     f"{diag_ctrl.ControlTypeName}/{diag_ctrl.ClassName!r} "
-                                    f"name={diag_ctrl.Name!r}")
+                                    f"name={_safe_diag_name(diag_ctrl.Name)!r}")
                                 # Real ask 2026-07-25: the single focused-control
                                 # line above was already "waiting on real
                                 # debug.log evidence" for the Gemini side panel
@@ -6835,7 +9319,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                                     try:
                                         log(f"  ancestor[{depth}]: "
                                             f"{anc.ControlTypeName}/{anc.ClassName!r} "
-                                            f"name={anc.Name!r}")
+                                            f"name={_safe_diag_name(anc.Name)!r}")
                                     except Exception:
                                         break
                         except Exception:
@@ -6849,10 +9333,66 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             context_label = app_label or process_name
             last_context_label = context_label
             if last_real_llm_label != context_label:
-                log(f"context: entered {context_label}")
-                last_real_llm_label = context_label
-                reset_typed_buffer()
-                locked_badge_rect = None
+                # Debounced the same way rect changes already are (see
+                # pending_rect_tuple's own comment) -- a context switch
+                # only actually takes effect once the SAME new label has
+                # been seen on 2 consecutive ticks, so a one-tick focus
+                # flicker back to the real app before this confirms never
+                # resets locked_badge_rect at all, and the existing rect-
+                # debounce naturally protects the display in the meantime
+                # (a wildly different unconfirmed context's rect won't be
+                # "close enough" to what's already locked, so the old,
+                # correct position just keeps showing).
+                if context_label == pending_context_label[0]:
+                    pending_context_count[0] += 1
+                else:
+                    pending_context_label[0] = context_label
+                    pending_context_count[0] = 1
+                if pending_context_count[0] >= 2:
+                    log(f"context: entered {context_label}")
+                    last_real_llm_label = context_label
+                    reset_typed_buffer()
+                    locked_badge_rect = None
+                    pending_context_label[0] = None
+                    pending_context_count[0] = 0
+            else:
+                pending_context_label[0] = None
+                pending_context_count[0] = 0
+
+            # Diagnostic dump (see last_claude_diag_key's own comment) --
+            # once per distinct composer rect, not every tick, so a real
+            # session doesn't get spammed by this every 0.7s.
+            #
+            # Real bug found live 2026-07-31 (crashed every single tick,
+            # "cannot access local variable 'raw_rect'"): raw_rect isn't
+            # assigned yet at this point in the function on the path that
+            # reaches here -- it's a LOCAL variable first bound further
+            # down, so referencing it here before that assignment ever
+            # runs is a hard UnboundLocalError, not a None value to guard
+            # against. Reads control's OWN rect directly instead; this
+            # block never needed raw_rect's corrections/widening anyway,
+            # just something stable to dedupe repeated dumps on.
+            if control is not None and (app_label == "Claude" or app_label in BADGE_WIDEN_RIGHT_SITES):
+                try:
+                    _diag_r = control.BoundingRectangle
+                    diag_key = (_diag_r.left, _diag_r.top, _diag_r.right, _diag_r.bottom)
+                except Exception:
+                    diag_key = None
+                if diag_key is not None and diag_key != last_claude_diag_key[0]:
+                    last_claude_diag_key[0] = diag_key
+                    if app_label == "Claude":
+                        _composer_diag_dump(control, "claude", depth=3)
+                    else:
+                        # Real bug found live 2026-07-31 (Antonio,
+                        # screenshot: badge floating disconnected on a
+                        # TALLER/expanded ChatGPT composer state --
+                        # base=(842,640,1804,799), 159px tall vs the
+                        # working single-line case's 56px -- "no row
+                        # found" within the normal 6-level ancestor walk).
+                        # Deeper dump than Claude's (10, not 3) since the
+                        # working hypothesis is this taller state nests
+                        # the toolbar further away, not just gates it out.
+                        _composer_diag_dump(control, "widen-right", depth=10)
             # The keystroke buffer is only needed where UIA can't read the
             # field (Claude). Tracking it elsewhere is pointless work.
             _typed_buffer_active[0] = not uia_readable
@@ -6997,12 +9537,16 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # bottom (that box is drawn by the CLI itself inside the same
             # character grid, not a separate UIA element). That's why the
             # badge was landing vertically centred in the entire pane
-            # instead of on the input line. Approximated instead: a thin
-            # slice off the BOTTOM of the pane's own rect, sized to
-            # roughly the bordered box's visual height. From here on this
-            # flows through the exact same "real box" path every other
-            # recognized app already uses (dock at ITS right edge,
-            # vertically centred within IT) -- not a separate mechanism.
+            # instead of on the input line.
+            #
+            # PERMANENTLY OUT OF SCOPE, 2026-08-03 (Antonio, direct,
+            # explicit, repeated: only the browser/app, never this code
+            # path). _find_terminal_input_line_rect is left defined but
+            # NOT CALLED, and must not be wired back in again without
+            # Antonio explicitly asking to work on the terminal/CLI
+            # positioning specifically, by name, in so many words -- a
+            # general "fix the badge" or "fix Claude Code" request does
+            # NOT authorize touching this block. Plain blind slice only.
             if raw_rect is not None and process_name in TERMINAL_HOST_PROCESSES:
                 raw_rect = _SimpleRect(
                     raw_rect.left, raw_rect.bottom - TERMINAL_INPUT_BOX_HEIGHT_GUESS,
@@ -7083,7 +9627,24 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     ctype = ""
                 if ctype == "DocumentControl":
                     page_level = True
+                elif ctype in _NEVER_A_COMPOSER_CONTROL_TYPES:
+                    # Real bug 2026-07-30 (see _NEVER_A_COMPOSER_CONTROL_TYPES):
+                    # app_label only says WHICH SITE this is (a domain or
+                    # title match), never WHAT'S ACTUALLY FOCUSED on it -- a
+                    # slider thumb on an otherwise-recognized LLM domain is
+                    # exactly as wrong an anchor as the whole-page
+                    # DocumentControl case this reuses, so it's rejected the
+                    # same way: falls through to the last good box position
+                    # instead of jumping to whatever unrelated control just
+                    # grabbed focus.
+                    page_level = True
+                    if ctype != last_rejected_ctype[0]:
+                        last_rejected_ctype[0] = ctype
+                        log(f"focused control is a {ctype}, not a real chat "
+                            f"composer, ignoring it (site is recognized, but "
+                            f"this control isn't the chat box)")
                 else:
+                    last_rejected_ctype[0] = None
                     # Backstop for any other control type that happens to
                     # span nearly the whole screen: still not a real box.
                     area = monitor_work_area((raw_rect.left + raw_rect.right) // 2,
@@ -7094,6 +9655,27 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                            (raw_rect.bottom - raw_rect.top) >= ah * 0.6:
                             page_level = True
 
+            # page_level here specifically means "a real control WAS found,
+            # but it's explicitly not a composer" (DocumentControl, or
+            # _NEVER_A_COMPOSER_CONTROL_TYPES like SliderControl -- see
+            # where page_level gets set above). Deliberately NOT keyed on
+            # raw_rect being None too: that also covers apps with NO
+            # accessible control at all (Claude's Electron composer, a
+            # terminal), where the fallback-guess branch below is the
+            # correct PERMANENT strategy, not a blip to eventually give up
+            # on -- only the "found a control, it's the wrong kind" case
+            # should ever count toward hiding.
+            if page_level:
+                no_real_composer_ticks[0] += 1
+            else:
+                no_real_composer_ticks[0] = 0
+            # ~4 ticks at the ~0.7s loop interval is long enough that a
+            # single-tick misread (the scenario the locked-rect fallback
+            # exists for) never trips it, short enough that a real
+            # non-composer view of a recognized app doesn't leave a stale
+            # or guessed badge sitting there for long.
+            NO_COMPOSER_HIDE_AFTER_TICKS = 4
+
             if raw_rect is not None and not page_level:
                 # Correct for controls whose OWN rect is inset from the
                 # visual box (ChatGPT's '+'-button pill, see
@@ -7101,6 +9683,30 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                 # left so the parent walk isn't re-run every 0.7s tick when
                 # nothing has moved.
                 raw_left = raw_rect.left
+                # Real bug found live 2026-08-03 (Antonio, screenshot: an
+                # artifact panel opened alongside Claude's chat, badge
+                # jumped deep into the artifact preview on the right,
+                # nowhere near the now-narrowed chat composer). Root cause,
+                # confirmed via debug.log: the artifact panel narrows the
+                # composer horizontally (740-1472 -> 114-847) but its
+                # BOTTOM edge coincidentally stayed at the exact same y
+                # (941) -- every toolbar-row cache below this point used to
+                # key ONLY on raw_bottom (or, for the same-row cases, only
+                # raw_right), so they served back the stale result computed
+                # for the OLD, wide box (toolbar_left=1237) rather than
+                # recomputing for the new narrow one, and 1237 falls well
+                # outside the new box entirely. The full raw rect is the
+                # only thing that's actually safe to key these on -- ANY
+                # geometry change, not just a change in whichever single
+                # edge a given cache happened to be keyed on, must
+                # invalidate them.
+                #
+                # CONFIRMED CORRECT (Antonio, live, 2026-08-03: "that is
+                # fixed too theres no reasons to fix this one either...
+                # you can now confidently lock all of them"). The
+                # artifact side-panel composer this fix targeted needed
+                # no further, composer-specific work on top of it.
+                raw_geom_key = (raw_rect.left, raw_rect.top, raw_rect.right, raw_rect.bottom)
                 if raw_left == box_left_cache_key[0]:
                     box_left = box_left_cache_val[0]
                 else:
@@ -7109,7 +9715,279 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                         box_left = raw_left
                     box_left_cache_key[0] = raw_left
                     box_left_cache_val[0] = box_left
-                rect = _BadgeRect(box_left, raw_rect.top, raw_rect.right, raw_rect.bottom)
+                raw_right = raw_rect.right
+                toolbar_left = None
+                toolbar_row_top = None
+                toolbar_row_bottom = None
+                toolbar_extra_gap = 0
+                is_code_review = False
+                is_home_row = False
+                if app_label in BADGE_WIDEN_RIGHT_SITES:
+                    if raw_right == box_right_cache_key[0]:
+                        box_right = box_right_cache_val[0]
+                    else:
+                        box_right = _input_box_right(control, raw_right)
+                        box_right_cache_key[0] = raw_right
+                        box_right_cache_val[0] = box_right
+                    if raw_geom_key == toolbar_left_cache_key[0]:
+                        toolbar_result = toolbar_left_cache_val[0]
+                    else:
+                        toolbar_result = _toolbar_cluster_left(control, raw_right)
+                        toolbar_left_cache_key[0] = raw_geom_key
+                        toolbar_left_cache_val[0] = toolbar_result
+                    # (left_x, row_top, row_bottom), or None -- see
+                    # _toolbar_cluster_left's docstring.
+                    if toolbar_result is not None:
+                        toolbar_left, toolbar_row_top, toolbar_row_bottom = toolbar_result
+                else:
+                    box_right = raw_right
+                raw_bottom = raw_rect.bottom
+                if app_label in BADGE_WIDEN_DOWN_SITES:
+                    if raw_bottom == box_bottom_cache_key[0]:
+                        box_bottom = box_bottom_cache_val[0]
+                    else:
+                        box_bottom = _input_box_bottom(control, raw_bottom)
+                        box_bottom_cache_key[0] = raw_bottom
+                        box_bottom_cache_val[0] = box_bottom
+                else:
+                    box_bottom = raw_bottom
+                # Real ask 2026-08-03 (Antonio, live, Gemini's Home
+                # composer: "when you add multiple lines it should stay
+                # and stick right at the area of where its at next to
+                # Flash"). Symmetric to ChatGPT's own same-row-then-below-
+                # row fallback (see BADGE_TOOLBAR_BELOW_SITES's own
+                # comment for that real, confirmed-live root cause: the
+                # composer's toolbar drops to its OWN row below the text
+                # once it grows past one line, so _toolbar_cluster_left's
+                # same-row gates correctly stop matching). Gemini's short-
+                # box case is already correct via BADGE_WIDEN_RIGHT_SITES
+                # above and stays untouched; this only fires as a fallback
+                # when that same-row detector found nothing at all, so it
+                # can't affect the already-tuned single-line position.
+                if app_label == "Gemini" and toolbar_left is None:
+                    if raw_geom_key == gemini_below_cache_key[0]:
+                        gemini_below_result = gemini_below_cache_val[0]
+                    else:
+                        gemini_below_result = _below_toolbar_cluster_left(control, raw_bottom)
+                        gemini_below_cache_key[0] = raw_geom_key
+                        gemini_below_cache_val[0] = gemini_below_result
+                    if gemini_below_result is not None:
+                        toolbar_left, toolbar_row_top, toolbar_row_bottom = gemini_below_result
+                        if toolbar_row_bottom is not None:
+                            box_bottom = max(box_bottom, toolbar_row_bottom)
+                if app_label in BADGE_TOOLBAR_BELOW_SITES:
+                    below_toolbar_result = None
+                    # Real bug found live 2026-08-02 (Antonio, screenshot +
+                    # live measurement: Claude's "Code" mode, claude.ai/code
+                    # -- badge floating disconnected near an unrelated
+                    # "Select repo" row, nowhere near the real bottom
+                    # toolbar). Root cause: _claude_inline_send_button used
+                    # to be tried FIRST for every "Claude" context, and Code
+                    # mode happens to have its OWN unrelated button also
+                    # literally named "Send" sitting well away from the
+                    # actual composer toolbar (confirmed via a live DOM
+                    # measurement -- it even coincidentally matches every
+                    # other signal that function checks: name, right-edge
+                    # proximity, vertical centering on the textbox). Rather
+                    # than guess a narrower exclusion rule against a single
+                    # example, the priority is inverted instead: the
+                    # below-row detector is well-validated across ChatGPT/
+                    # Gemini/Claude plain-chat and confirmed via the same
+                    # live measurement to correctly find Code mode's REAL
+                    # toolbar (Sonnet 5/Effort/Usage, all real ButtonControls
+                    # in the right position) -- so it goes first now, and
+                    # _claude_inline_send_button (see its own docstring)
+                    # becomes the fallback for the narrower case it was
+                    # actually built for: a genuine Cowork/project layout
+                    # where the below-row walk finds nothing at all (its own
+                    # docstring already says its real toolbar sits several
+                    # levels down a separate branch the below-row walk
+                    # doesn't reach), not a layout the below-row walk
+                    # already handles correctly.
+                    if raw_geom_key == below_toolbar_left_cache_key[0]:
+                        below_toolbar_result = below_toolbar_left_cache_val[0]
+                    else:
+                        below_toolbar_result = _below_toolbar_cluster_left(control, raw_bottom)
+                        below_toolbar_left_cache_key[0] = raw_geom_key
+                        below_toolbar_left_cache_val[0] = below_toolbar_result
+                        if below_toolbar_result is None:
+                            below_toolbar_result = last_good_below_toolbar_result.get(app_label)
+                        else:
+                            last_good_below_toolbar_result[app_label] = below_toolbar_result
+                    # Real bug found live 2026-08-02 (Antonio, screenshots:
+                    # ChatGPT badge landing well below a short, single-
+                    # line composer, reliably every time). Root-caused
+                    # via a live getBoundingClientRect() measurement in
+                    # the actual page, not another guess: ChatGPT's
+                    # toolbar (Add files / dictation / send) sits LEVEL
+                    # with the text row for a single-line message
+                    # (textbox y=395-437, toolbar y=391-427 -- nearly
+                    # identical, not below at all), the exact SAME-ROW
+                    # shape _toolbar_cluster_left was built for (Gemini).
+                    # The 2026-08-01 fix that moved ChatGPT into this
+                    # below-row family was measuring a genuinely
+                    # DIFFERENT, correct case (a multi-line box, where
+                    # the toolbar really does drop to its own row below)
+                    # but that measurement never covered the single-line
+                    # case, which regressed as a side effect -- it used
+                    # to work fine back when ChatGPT was still in
+                    # BADGE_WIDEN_RIGHT_SITES. Rather than re-litigate
+                    # which family ChatGPT "really" belongs to (the
+                    # honest answer is both, depending on line count),
+                    # fall back to the same-row detector when the
+                    # below-row one finds nothing -- each layout gets
+                    # matched by whichever detector actually finds it.
+                    if below_toolbar_result is None and app_label == "ChatGPT":
+                        below_toolbar_result = _toolbar_cluster_left(control, raw_right)
+                        if below_toolbar_result is not None:
+                            last_good_below_toolbar_result[app_label] = below_toolbar_result
+                    # CONFIRMED CORRECT (Antonio, live, 2026-08-02: "now
+                    # we are done with chatgpt for now... lock the
+                    # position of the chatgpt badge down"). Do not
+                    # retune the same_row tolerance, this fallback, or
+                    # the last-good cache above without a new real ask.
+                    # BADGE_TOOLBAR_GAP_OVERRIDES compensates for
+                    # Claude's plain-chat "Opus 4.8" label being
+                    # invisible to UIA (see that constant's own
+                    # comment) -- only relevant to THIS below-row path.
+                    # The Cowork inline Send button below is a real,
+                    # precisely-located control with nothing invisible
+                    # in front of it, so it must NOT get this same
+                    # extra push or it'd land too far left.
+                    if below_toolbar_result is not None:
+                        toolbar_extra_gap = BADGE_TOOLBAR_GAP_OVERRIDES.get(app_label, 0)
+                        if app_label == "Claude":
+                            if raw_geom_key == claude_code_review_cache_key[0]:
+                                is_code_review = claude_code_review_cache_val[0]
+                            else:
+                                is_code_review = _claude_code_review_row(control)
+                                claude_code_review_cache_key[0] = raw_geom_key
+                                claude_code_review_cache_val[0] = is_code_review
+                            if is_code_review:
+                                toolbar_extra_gap = CLAUDE_CODE_REVIEW_GAP
+                            if raw_geom_key == claude_home_row_cache_key[0]:
+                                is_home_row = claude_home_row_cache_val[0]
+                            else:
+                                is_home_row = _claude_home_row(control)
+                                claude_home_row_cache_key[0] = raw_geom_key
+                                claude_home_row_cache_val[0] = is_home_row
+                            if is_home_row:
+                                toolbar_extra_gap = CLAUDE_HOME_ROW_GAP
+                        elif app_label == "Perplexity":
+                            if raw_geom_key == perplexity_long_model_cache_key[0]:
+                                is_long_model = perplexity_long_model_cache_val[0]
+                            else:
+                                is_long_model = _perplexity_long_model_row(control)
+                                perplexity_long_model_cache_key[0] = raw_geom_key
+                                perplexity_long_model_cache_val[0] = is_long_model
+                            if is_long_model:
+                                # Real ask 2026-08-03 (Antonio, live, right
+                                # after confirming the "Model" button's
+                                # real text width is unmeasurable via UIA):
+                                # "put it to the right of the computer
+                                # badge rather than next to the prompt
+                                # names because they can expand and shrink
+                                # based on the names." Anchors off
+                                # "Computer" instead, whose own label never
+                                # changes -- see _perplexity_computer_
+                                # anchor's docstring. Solves for the
+                                # toolbar_left value that makes
+                                # _position_for's own bx = toolbar_left -
+                                # gap - BADGE_ICON_SIZE formula land
+                                # exactly at computer_right + a small
+                                # buffer, instead of restructuring that
+                                # shared formula for one site.
+                                if raw_geom_key == perplexity_computer_anchor_cache_key[0]:
+                                    computer_right = perplexity_computer_anchor_cache_val[0]
+                                else:
+                                    computer_right = _perplexity_computer_anchor(control)
+                                    perplexity_computer_anchor_cache_key[0] = raw_geom_key
+                                    perplexity_computer_anchor_cache_val[0] = computer_right
+                                log(f"perplexity_computer_anchor: computer_right={computer_right}")
+                                if computer_right is not None:
+                                    toolbar_left = (computer_right + PERPLEXITY_COMPUTER_ANCHOR_GAP
+                                                     + BADGE_TOOLBAR_GAP + BADGE_ICON_SIZE)
+                                    toolbar_extra_gap = 0
+                                else:
+                                    toolbar_extra_gap = PERPLEXITY_LONG_MODEL_GAP
+                    # Fallback, not first choice (see the long comment
+                    # above this block for why the swap happened
+                    # 2026-08-02): only for Claude, only when the
+                    # well-validated below-row walk truly found nothing --
+                    # the narrow Cowork/project layout _claude_inline_
+                    # send_button's own docstring describes, whose real
+                    # toolbar the below-row walk genuinely can't reach.
+                    if below_toolbar_result is None and app_label == "Claude":
+                        if raw_geom_key == claude_send_btn_cache_key[0]:
+                            below_toolbar_result = claude_send_btn_cache_val[0]
+                        else:
+                            below_toolbar_result = _claude_inline_send_button(control)
+                            claude_send_btn_cache_key[0] = raw_geom_key
+                            claude_send_btn_cache_val[0] = below_toolbar_result
+                        if below_toolbar_result is not None:
+                            toolbar_extra_gap = CLAUDE_INLINE_SEND_EXTRA_GAP
+                    # Real bug found live 2026-08-03 (Antonio, screenshot:
+                    # badge floating too high, overlapping "High", on the
+                    # top-level Home/Cowork "How can I help you today?"
+                    # composer). Root cause: that composer's text area and
+                    # its toolbar (Opus 4.8/Sonnet 5, effort, mic) sit in
+                    # the SAME row, not stacked -- a genuinely different
+                    # shape from every other Claude layout handled above,
+                    # which are all below-row. below_toolbar_cluster_left's
+                    # delta gate requires the toolbar to sit at least 20px
+                    # BELOW the text row, so it correctly finds nothing
+                    # here, and _claude_inline_send_button doesn't match
+                    # this structure either -- both fall through, landing
+                    # on the crude box-centred fallback with no idea where
+                    # the real toolbar row is. _toolbar_cluster_left is the
+                    # SAME-ROW detector already proven on ChatGPT/Gemini
+                    # (see BADGE_WIDEN_RIGHT_SITES); tried here as the last
+                    # resort for Claude specifically, since this home
+                    # composer's shape matches that family, not the below-
+                    # row one every other Claude surface uses.
+                    if below_toolbar_result is None and app_label == "Claude":
+                        if raw_geom_key == claude_same_row_cache_key[0]:
+                            below_toolbar_result = claude_same_row_cache_val[0]
+                        else:
+                            below_toolbar_result = _toolbar_cluster_left(control, raw_right, split_left_right=True)
+                            claude_same_row_cache_key[0] = raw_geom_key
+                            claude_same_row_cache_val[0] = below_toolbar_result
+                        if below_toolbar_result is not None:
+                            toolbar_extra_gap = CLAUDE_HOME_ROW_EXTRA_GAP
+                    # (left_x, row_top, row_bottom), or None -- see
+                    # _below_toolbar_cluster_left's docstring.
+                    if below_toolbar_result is not None:
+                        toolbar_left, toolbar_row_top, toolbar_row_bottom = below_toolbar_result
+                        # Real bug found live 2026-08-03 (Antonio,
+                        # screenshot: badge sitting ON the divider between
+                        # the text area and the toolbar row, not inside
+                        # either). Root cause of the box's own bottom
+                        # clamp (2026-08-02) landing there: box_bottom (a
+                        # SEPARATE, independently-widened estimate) can sit
+                        # a few px SHORTER than the real detected row's own
+                        # bottom -- measured live, 1023 vs row_bottom 1026.
+                        # _position_for's clamp was correctly keeping the
+                        # badge inside box_bottom, but that pulled it
+                        # ABOVE the row it's supposed to be centred on
+                        # instead. Real fix, at the source instead of
+                        # patching the symptom downstream: the outer box
+                        # must never be shorter than the row it contains --
+                        # widen it here so both numbers agree, and the
+                        # clamp and the row-centring math stop fighting
+                        # each other.
+                        if toolbar_row_bottom is not None:
+                            box_bottom = max(box_bottom, toolbar_row_bottom)
+                rect = _BadgeRect(box_left, raw_rect.top, box_right, box_bottom,
+                                   toolbar_left=toolbar_left,
+                                   toolbar_row_top=toolbar_row_top,
+                                   toolbar_row_bottom=toolbar_row_bottom,
+                                   toolbar_extra_gap=toolbar_extra_gap,
+                                   toolbar_row_vshift=(CLAUDE_CODE_REVIEW_VSHIFT if is_code_review
+                                                        else GEMINI_VSHIFT if (app_label == "Gemini" and toolbar_left is not None)
+                                                        else GROK_SINGLE_LINE_VSHIFT if (app_label == "Grok" and toolbar_left is not None
+                                                                                          and (raw_rect.bottom - raw_rect.top) <= GROK_SINGLE_LINE_MAX_HEIGHT)
+                                                        else COPILOT_VSHIFT if (app_label == "Copilot" and toolbar_left is not None)
+                                                        else 0))
                 # Plain tuple, not the Rect object itself: don't assume it
                 # implements __eq__ the way a bare tuple reliably does,
                 # that assumption would either miss real changes or log
@@ -7126,7 +10004,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     locked_badge_rect = rect
                     pending_rect_tuple[0] = None
                     pending_rect_count[0] = 0
-                elif rect_tuple == pending_rect_tuple[0]:
+                elif _rects_close_enough(rect_tuple, pending_rect_tuple[0]):
                     pending_rect_count[0] += 1
                     if pending_rect_count[0] >= 2:
                         locked_badge_rect = rect
@@ -7153,8 +10031,28 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     except Exception:
                         ctrl_desc = "<error reading control info>"
                     inset = f" (corrected left {raw_left}->{box_left})" if box_left != raw_left else ""
-                    log(f"badge rect source: control={ctrl_desc} rect={rect_tuple}{inset}")
+                    if app_label in BADGE_TOOLBAR_BELOW_SITES or app_label in BADGE_WIDEN_RIGHT_SITES:
+                        toolbar_note = f" toolbar_left={toolbar_left} row=({toolbar_row_top},{toolbar_row_bottom})"
+                    else:
+                        toolbar_note = ""
+                    bottom_note = f" (widened bottom {raw_bottom}->{box_bottom})" if app_label in BADGE_WIDEN_DOWN_SITES and box_bottom != raw_bottom else ""
+                    log(f"badge rect source: control={ctrl_desc} rect={rect_tuple}{inset}{toolbar_note}{bottom_note}")
                     last_logged_rect[0] = rect_tuple
+            elif page_level and no_real_composer_ticks[0] >= NO_COMPOSER_HIDE_AFTER_TICKS:
+                # Real fix 2026-07-30 (see no_real_composer_ticks' own
+                # comment): a REAL control was found and it's been the
+                # wrong kind for several ticks running -- not a blip, a
+                # genuine non-composer view of a recognized app. Hide
+                # instead of showing the last locked position forever.
+                rect = None
+                if no_real_composer_ticks[0] == NO_COMPOSER_HIDE_AFTER_TICKS:
+                    # Fire exactly once at the threshold crossing (hide/
+                    # dismiss are idempotent, but there's no reason to
+                    # keep re-issuing them for as long as this view stays
+                    # open).
+                    badge.root.after(0, badge.hide)
+                    popup.root.after(0, popup.dismiss)
+                locked_badge_rect = None
             elif locked_badge_rect is not None:
                 rect = locked_badge_rect
             else:
@@ -7359,8 +10257,8 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                         dh = (rect.bottom - rect.top) - (card_open_anchor_rect.bottom - card_open_anchor_rect.top)
                         resized = abs(dw) > RESIZE_THRESHOLD or abs(dh) > RESIZE_THRESHOLD
                 if resized:
-                    def _resnap(rect=rect, count=suggestion_count, checked=is_long_enough):
-                        badge.show_near(rect, count, checked=checked)
+                    def _resnap(rect=rect, count=suggestion_count, checked=is_long_enough, app_label=app_label):
+                        badge.show_near(rect, count, checked=checked, app_label=app_label)
                         if popup.window is not None:
                             try:
                                 popup._finalize(popup.window, *popup._pos)
@@ -7370,8 +10268,8 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                     card_open_anchor_rect = rect
                 elif moved_far:
                     def _follow_drag(dx=dx, dy=dy, rect=rect, count=suggestion_count,
-                                      checked=is_long_enough):
-                        badge.show_near(rect, count, checked=checked)
+                                      checked=is_long_enough, app_label=app_label):
+                        badge.show_near(rect, count, checked=checked, app_label=app_label)
                         win = popup.window
                         if win is not None:
                             try:
@@ -7397,7 +10295,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             else:
                 card_open_anchor_rect = None
                 if rect is not None:
-                    badge.root.after(0, badge.show_near, rect, suggestion_count, is_long_enough)
+                    badge.root.after(0, badge.show_near, rect, suggestion_count, is_long_enough, app_label)
 
             # Live-update the OPEN native review card as the user keeps typing,
             # so new typos appear (and the list grows, then scrolls) in real
@@ -7429,6 +10327,16 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # apply_new_text.
             hwnd_snapshot = llm_hwnd
 
+            # Real find 2026-07-27 (pre-launch audit, terminal tab-switch
+            # bug): the tab name embedded in the terminal's own border row
+            # (see _extract_terminal_input_line) is the one signal that
+            # actually tells Windows Terminal's tabs apart -- hwnd, UIA
+            # RuntimeId, and owning-window all proved identical across tabs
+            # in live testing. Captured now, same moment as hwnd_snapshot,
+            # so apply_new_text can refuse if the active tab has changed by
+            # the time Apply is actually clicked.
+            tab_name_snapshot = _last_terminal_tab_name[0]
+
             source_snapshot = text_source
 
             # The actual text control, captured here for the same reason as
@@ -7455,7 +10363,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                 base_text=text_snapshot, base_analysis=analysis,
                 x=popup_x, y=popup_y, hwnd=hwnd_snapshot, source=source_snapshot,
                 field=control_snapshot, is_llm=is_llm_snapshot,
-                safe_write_only=safe_write_snapshot,
+                safe_write_only=safe_write_snapshot, tab_name=tab_name_snapshot,
             ):
                 # Speed (2026-07-22): clicking the badge in an LLM app is a
                 # strong signal a compress is coming. Warm the model NOW, in
@@ -7570,6 +10478,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                             root, popup, rewritten, target_hwnd=hwnd,
                             dismiss_after=True, target_control=field,
                             expected_old_text=source_text,
+                            expected_tab_name=tab_name,
                             safe_write_only=safe_write_only,
                         )
                         # Same rule as on_apply below (2026-07-25 audit): only
@@ -7668,6 +10577,29 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                         return
 
                     cur_text = apply_state["text"]
+                    # Real bug found live 2026-07-27 (pre-launch audit, the
+                    # actual root cause behind the "Apply typed stale
+                    # content" reports): apply_state["text"] is refreshed by
+                    # popup.refresh() on EVERY watch_loop tick while the card
+                    # is open, precisely so Apply stays in sync if you keep
+                    # typing after suggestions appear (see refresh()'s own
+                    # docstring). That's the right behavior for browsers/apps
+                    # (UIA value/text reads there are direct and reliable),
+                    # but for terminals it means a single rare misread from
+                    # _extract_terminal_input_line -- the same occasional
+                    # wrong-bordered-box failure documented on that function
+                    # -- can poison this value the moment it happens, and it
+                    # then sits there silently until either another good tick
+                    # overwrites it or Apply gets clicked while it's still
+                    # wrong. There's no guarantee a good tick arrives first.
+                    # A fresh read taken right now, at the actual moment of
+                    # the click, has been reliable in direct live testing, so
+                    # terminals get one here instead of trusting whatever the
+                    # last background tick happened to write.
+                    if _process_name_for_hwnd(hwnd) in TERMINAL_HOST_PROCESSES:
+                        fresh_text, _ = get_focused_text()
+                        if fresh_text is not None:
+                            cur_text = fresh_text
                     rules_text = suggestion_engine.apply_suggestions(cur_text, checked_suggestions)
 
                     if checked_suggestions:
@@ -7681,6 +10613,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
                             root, popup, rules_text, target_hwnd=hwnd,
                             dismiss_after=False, target_control=field,
                             expected_old_text=cur_text,
+                            expected_tab_name=tab_name,
                             safe_write_only=safe_write_only,
                         )
                         if applied:
