@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #FFFFFF; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  #card {
+    width: 1920px;
+    height: 1080px;
+    background: #FFFFFF;
+    display: flex;
+    flex-direction: column;
+    padding: 90px 110px 70px;
+  }
+
+  .eyebrow { font-size: 24px; font-weight: 600; color: #6A6A6A; margin-bottom: 20px; }
+  .headline { font-size: 52px; font-weight: 600; color: #121212; line-height: 1.15; margin-bottom: 44px; }
+
+  .terminal {
+    background: #0D0D0F;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.18);
+    width: 100%;
+    max-width: 1300px;
+  }
+
+  .term-header { background: #17171A; padding: 20px 30px; display: flex; align-items: center; justify-content: space-between; }
+  .term-title { color: #C9C9C9; font-family: Consolas, monospace; font-size: 20px; }
+  .term-controls { display: flex; align-items: center; gap: 14px; color: #55555A; font-size: 20px; }
+
+  .term-body { padding: 34px 36px 30px; font-family: Consolas, monospace; font-size: 21px; line-height: 1.6; }
+  .prompt-line { color: #6A6A6A; }
+  .label { color: #55555A; font-size: 16px; letter-spacing: 1px; margin-top: 22px; margin-bottom: 6px; }
+  .said-text { color: #8A8A8A; }
+
+  .claude-prompt-wrap { position: relative; margin-top: 26px; }
+  .claude-rule { height: 1px; background: #3A3A3E; width: 100%; }
+  .claude-prompt-row { display: flex; align-items: center; gap: 14px; padding: 14px 4px; }
+  .claude-chevron { color: #C9C9C9; font-size: 21px; }
+  .claude-prompt-text { color: #F2F2F2; font-size: 21px; }
+
+  .claude-status-row { display: flex; align-items: center; padding: 12px 4px 0; font-size: 20px; line-height: 1.5; color: #75757A; }
+  .claude-status-row .ff-icon, .claude-status-row .highlight { color: #FFC107; font-weight: 700; }
+  .claude-status-row .shell-count { color: #00CCCC; font-weight: 700; }
+
+  .claude-badge-wrap { position: relative; display: inline-block; width: 30px; height: 30px; vertical-align: middle; margin-left: auto; flex-shrink: 0; }
+  .claude-badge { display: block; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; }
+  .claude-badge img { width: 100%; height: 100%; display: block; }
+  .claude-badge-dot { position: absolute; bottom: -3px; right: -3px; width: 13px; height: 13px; border-radius: 50%; background: #A0E021; border: 2px solid #FFFFFF; box-sizing: border-box; }
+
+  .comprsly-strip { border-top: 1px solid #232326; padding: 20px 36px; display: flex; align-items: center; gap: 12px; }
+  .comprsly-strip img { width: 18px; height: 18px; border-radius: 5px; }
+  .comprsly-strip .stat-text { font-family: Consolas, monospace; font-size: 17px; font-weight: 600; color: #4FB980; }
+
+  .footer { margin-top: auto; padding-top: 44px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .brand img { height: 44px; width: auto; display: block; }
+  .handle { font-size: 22px; color: #6A6A6A; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="eyebrow">@comprsly</div>
+    <div class="headline">Say it messy. Comprsly cleans it up.</div>
+
+    <div class="terminal">
+      <div class="term-header">
+        <div class="term-title">Windows Terminal</div>
+        <div class="term-controls"><span>&#9472;</span><span>&#9633;</span><span>&#10005;</span></div>
+      </div>
+      <div class="term-body">
+        <div class="prompt-line">PS C:\dev\app&gt; claude</div>
+
+        <div class="label">WHAT YOU SAID</div>
+        <div class="said-text">okay so i need you to like clean up all the console logs i left in there, theres a bunch of them just floating around, get rid of all of em</div>
+
+        <div class="label">WHAT COMPRSLY SENDS</div>
+        <div class="claude-prompt-wrap">
+          <div class="claude-rule"></div>
+          <div class="claude-prompt-row">
+            <span class="claude-chevron">&#8250;</span>
+            <span class="claude-prompt-text">Remove all console.log statements from the codebase.</span>
+          </div>
+          <div class="claude-rule"></div>
+        </div>
+
+        <div class="claude-status-row">
+          <span class="status-text"><span class="ff-icon">&#9197;&#9197;</span> <span class="highlight">auto mode on</span> &#183; <span class="shell-count">1 shell</span></span>
+          <span class="claude-badge-wrap">
+            <span class="claude-badge"><img src="../materials/icons/badge.png" alt=""></span>
+            <span class="claude-badge-dot"></span>
+          </span>
+        </div>
+      </div>
+
+      <div class="comprsly-strip">
+        <img src="../materials/icons/badge.png" alt="">
+        <span class="stat-text">22 tokens saved &#183; 63% shorter</span>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="brand"><img src="../materials/icons/mark_dark.png" alt="Comprsly"></div>
+      <div class="handle">Free &#183; local &#183; no account</div>
+    </div>
+  </div>
+</body>
+</html>

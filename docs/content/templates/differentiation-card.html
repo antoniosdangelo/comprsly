@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #FFFFFF; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  #card { width: 1080px; height: 1350px; background: #FFFFFF; display: flex; flex-direction: column; padding: 90px 90px 70px; }
+
+  .eyebrow { font-size: 24px; font-weight: 600; color: #6A6A6A; margin-bottom: 26px; }
+  .headline { font-size: 52px; font-weight: 600; color: #121212; line-height: 1.15; margin-bottom: 56px; }
+
+  .content-wrap { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+
+  .compare { display: flex; flex-direction: column; gap: 20px; margin-bottom: 40px; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    border: 1px solid #ECECEC;
+    border-radius: 14px;
+    padding: 28px 30px;
+  }
+
+  .row.them { color: #9A9A9A; }
+  .row.us { border-color: #121212; }
+
+  .row-mark { font-size: 26px; flex-shrink: 0; width: 34px; }
+  .row.them .row-mark { color: #B5B5B5; }
+  .row.us .row-mark { color: #121212; }
+
+  .row-text { font-size: 26px; line-height: 1.4; }
+  .row.them .row-text { color: #9A9A9A; }
+  .row.us .row-text { color: #121212; font-weight: 500; }
+
+  .sub { font-size: 22px; color: #6A6A6A; line-height: 1.5; max-width: 800px; }
+
+  .footer { margin-top: auto; padding-top: 40px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .brand img { height: 52px; width: auto; display: block; }
+  .handle { font-size: 26px; color: #6A6A6A; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="eyebrow">@comprsly</div>
+
+    <div class="content-wrap">
+      <div class="headline">A number isn't the same as a fix.</div>
+
+      <div class="compare">
+        <div class="row them"><div class="row-mark">&#8212;</div><div class="row-text">Other tools show you a number, then leave you to fix it yourself.</div></div>
+        <div class="row us"><div class="row-mark">&#10003;</div><div class="row-text">Comprsly watches you type and offers the shorter version before you send.</div></div>
+      </div>
+
+      <div class="sub">Passive counters exist. Paste-and-click compressors exist. Real-time, inline, in any chat box, is the part nobody else does.</div>
+    </div>
+
+    <div class="footer">
+      <div class="brand">
+        <img src="../materials/icons/mark_dark.png" alt="Comprsly">
+      </div>
+      <div class="handle">@comprsly</div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Comprsly website Worker settings. Copy this file to .dev.vars and fill in the values.
+# Never commit .dev.vars. The live values are stored in Cloudflare.
+
+# Microsoft Store (Partner Center) login for reading store stats. The three go together.
+MSSTORE_TENANT_ID=
+MSSTORE_CLIENT_ID=
+MSSTORE_CLIENT_SECRET=
+
+# Sends emails from the site through Resend.
+RESEND_API_KEY=
+
+# Key and password that protect the private stats page at /stats.
+STATS_KEY=
+STATS_PASSWORD=
