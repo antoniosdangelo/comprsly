@@ -1,6 +1,8 @@
 # Comprsly
 
-Comprsly makes writing shorter and clearer on Windows. This one repo holds every part of it.
+Comprsly: compressed prompts, anywhere you chat with AI. It sits quietly next to Claude, ChatGPT, Gemini, Perplexity and Copilot, fixes your spelling and grammar as you type, and can optionally shrink your whole prompt with a small AI model, entirely on your device.
+
+Live site: https://comprsly.com. This one repo holds every part of it. Every update is explained in `CHANGELOG.md`.
 
 ## What is where
 | Folder | What it is | Built with |
