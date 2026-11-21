@@ -4,6 +4,21 @@ Comprsly: compressed prompts, anywhere you chat with AI. It sits quietly next to
 
 Live site: https://comprsly.com. This one repo holds every part of it. Every update is explained in `CHANGELOG.md`.
 
+## What it does
+- Works next to Claude, ChatGPT, Gemini, Perplexity and Copilot (in the browser and in Windows Terminal).
+- Fixes spelling and grammar as you type, with a suggestion card you can apply or ignore.
+- Optionally shrinks your whole prompt with a small AI model that runs on your own PC.
+
+## Install (Windows)
+1. Get it from the Microsoft Store: https://apps.microsoft.com/detail/9N8W5HPJ4DHV (also linked from https://comprsly.com).
+2. Open Comprsly once and follow the short setup screen.
+3. It runs quietly in the background and appears when you type in a supported app.
+
+## Do you need an API key?
+No. Comprsly does not use any AI service account, yours or anyone else's.
+- Spelling and grammar run fully on your PC.
+- The optional prompt shrinking uses a small open model that Comprsly downloads once from Hugging Face, then runs offline on your PC. Your text never leaves your computer.
+
 ## What is where
 | Folder | What it is | Built with |
 |---|---|---|
