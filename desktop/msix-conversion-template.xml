@@ -1,0 +1,36 @@
+<MsixPackagingToolTemplate
+    xmlns="http://schemas.microsoft.com/appx/msixpackagingtool/template/2018"
+    xmlns:V4="http://schemas.microsoft.com/msix/msixpackagingtool/template/1910">
+
+    <Settings
+        AllowTelemetry="true"
+        ApplyAllPrepareComputerFixes="true"
+        GenerateCommandLineFile="true"
+        AllowPromptForPassword="false"
+        EnforceMicrosoftStoreVersioningRequirements="true">
+    </Settings>
+
+    <SaveLocation
+        PackagePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\installer-output\ComprslyStore.msix"
+        TemplatePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\msix-conversion-template-generated.xml" />
+
+    <Installer
+        Path="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\installer-output\ComprslySetup.exe"
+        Arguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+        InstallLocation="C:\Users\anton\AppData\Local\Comprsly" />
+
+    <PackageInformation
+        PackageName="Comprsly.Comprsly"
+        PackageDisplayName="Comprsly"
+        PublisherName="CN=378CB613-F751-4D4F-AF9C-EF97524D7367"
+        PublisherDisplayName="Comprsly"
+        Version="1.0.2.0">
+
+        <Applications>
+            <Application
+                Id="Comprsly"
+                DisplayName="Comprsly"
+                ExecutableName="Comprsly.exe"/>
+        </Applications>
+    </PackageInformation>
+</MsixPackagingToolTemplate>
