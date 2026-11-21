@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #FFFFFF; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  #card { width: 1080px; height: 1350px; background: #FFFFFF; display: flex; flex-direction: column; padding: 90px 90px 70px; }
+
+  .eyebrow { font-size: 24px; font-weight: 600; color: #6A6A6A; margin-bottom: 26px; }
+  .headline { font-size: 52px; font-weight: 600; color: #121212; line-height: 1.15; margin-bottom: 56px; }
+
+  .diagram {
+    border: 1px solid #ECECEC;
+    border-radius: 18px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.10);
+    padding: 44px;
+    margin-bottom: 40px;
+  }
+
+  .zones { display: flex; gap: 28px; align-items: stretch; }
+
+  .zone { flex: 1; display: flex; flex-direction: column; }
+
+  .zone-label {
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #9A9A9A;
+    margin-bottom: 20px;
+    text-align: center;
+  }
+
+  .computer-zone { flex: 1; border: 1px solid #ECECEC; border-radius: 14px; padding: 28px 20px; background: #FAFAFA; }
+
+  .step {
+    background: #FFFFFF;
+    border: 1px solid #ECECEC;
+    border-radius: 10px;
+    padding: 16px 18px;
+    font-size: 20px;
+    color: #121212;
+    text-align: center;
+    font-weight: 500;
+  }
+
+  .arrow-down { text-align: center; color: #B5B5B5; font-size: 22px; padding: 8px 0; }
+
+  .cloud-zone {
+    flex: 1;
+    border: 1px dashed #ECECEC;
+    border-radius: 14px;
+    padding: 28px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .cloud-blocked {
+    text-align: center;
+    color: #B5B5B5;
+  }
+
+  .cloud-blocked .x { font-size: 44px; margin-bottom: 10px; }
+  .cloud-blocked .txt { font-size: 19px; }
+
+  .trust-line {
+    font-size: 22px;
+    color: #121212;
+    line-height: 1.5;
+    padding-top: 30px;
+    border-top: 1px solid #ECECEC;
+    margin-top: 30px;
+  }
+
+  .footer { margin-top: auto; padding-top: 40px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .brand img { height: 52px; width: auto; display: block; }
+  .handle { font-size: 26px; color: #6A6A6A; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="eyebrow">@comprsly</div>
+    <div class="headline">Your prompts never leave your computer.</div>
+
+    <div class="diagram">
+      <div class="zones">
+        <div class="zone">
+          <div class="zone-label">Your computer</div>
+          <div class="computer-zone">
+            <div class="step">Your prompt</div>
+            <div class="arrow-down">&#8595;</div>
+            <div class="step">Comprsly</div>
+            <div class="arrow-down">&#8595;</div>
+            <div class="step">Local model</div>
+            <div class="arrow-down">&#8595;</div>
+            <div class="step">Improved prompt</div>
+          </div>
+        </div>
+        <div class="zone">
+          <div class="zone-label">Cloud</div>
+          <div class="cloud-zone">
+            <div class="cloud-blocked">
+              <div class="x">&#10005;</div>
+              <div class="txt">Nothing sent here</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trust-line">No prompt processing. No account, no tracking, no usage data. The only network use is downloading the app itself.</div>
+    </div>
+
+    <div class="footer">
+      <div class="brand">
+        <img src="../materials/icons/mark_dark.png" alt="Comprsly">
+      </div>
+      <div class="handle">@comprsly</div>
+    </div>
+  </div>
+</body>
+</html>

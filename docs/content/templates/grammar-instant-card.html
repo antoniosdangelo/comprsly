@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #FFFFFF; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  #card { width: 1080px; height: 1350px; background: #FFFFFF; display: flex; flex-direction: column; padding: 90px 90px 70px; }
+
+  .eyebrow { font-size: 24px; font-weight: 600; color: #6A6A6A; margin-bottom: 26px; }
+  .headline { font-size: 52px; font-weight: 600; color: #121212; line-height: 1.15; margin-bottom: 24px; }
+  .sub { font-size: 24px; color: #6A6A6A; line-height: 1.5; max-width: 800px; margin-bottom: 50px; }
+
+  .content-wrap { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+
+  .fix-list { border: 1px solid #ECECEC; border-radius: 12px; overflow: hidden; margin-bottom: 36px; }
+
+  .fix-row { display: flex; align-items: center; gap: 16px; padding: 20px 26px; border-bottom: 1px solid #ECECEC; }
+  .fix-row:last-child { border-bottom: none; }
+
+  .checkmark { width: 26px; height: 26px; border-radius: 6px; background: #121212; flex-shrink: 0; display: flex; align-items: center; justify-content: center; color: #FFFFFF; font-size: 16px; }
+
+  .fix-diff { display: flex; align-items: baseline; gap: 10px; font-size: 24px; flex: 1; }
+  .fix-old { color: #B5B5B5; text-decoration: line-through; }
+  .fix-arrow { color: #B5B5B5; }
+  .fix-new { color: #121212; font-weight: 600; }
+
+  .badge { font-size: 19px; color: #9A9A9A; font-weight: 600; }
+
+  .footer { margin-top: auto; padding-top: 40px; display: flex; align-items: center; justify-content: space-between; }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .brand img { height: 52px; width: auto; display: block; }
+  .handle { font-size: 26px; color: #6A6A6A; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="eyebrow">@comprsly</div>
+
+    <div class="content-wrap">
+      <div class="headline">Grammar and spelling, zero AI required.</div>
+      <div class="sub">Rules-based fixes run instantly on native spell-check, no model, no download wait. Works the moment you install.</div>
+
+      <div class="fix-list">
+        <div class="fix-row">
+          <div class="checkmark">&#10003;</div>
+          <div class="fix-diff"><span class="fix-old">recieve</span><span class="fix-arrow">&#8594;</span><span class="fix-new">receive</span></div>
+          <div class="badge">instant</div>
+        </div>
+        <div class="fix-row">
+          <div class="checkmark">&#10003;</div>
+          <div class="fix-diff"><span class="fix-old">dont</span><span class="fix-arrow">&#8594;</span><span class="fix-new">don't</span></div>
+          <div class="badge">instant</div>
+        </div>
+        <div class="fix-row">
+          <div class="checkmark">&#10003;</div>
+          <div class="fix-diff"><span class="fix-old">should of</span><span class="fix-arrow">&#8594;</span><span class="fix-new">should have</span></div>
+          <div class="badge">instant</div>
+        </div>
+      </div>
+
+      <div class="sub" style="margin-bottom:0">The AI compression step is separate and optional. Grammar doesn't wait on it.</div>
+    </div>
+
+    <div class="footer">
+      <div class="brand">
+        <img src="../materials/icons/mark_dark.png" alt="Comprsly">
+      </div>
+      <div class="handle">@comprsly</div>
+    </div>
+  </div>
+</body>
+</html>

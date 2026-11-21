@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #FFFFFF; width: 1920px; height: 1080px; overflow: hidden; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; position: relative; }
+
+  .scene {
+    position: absolute;
+    inset: 0;
+    width: 1920px;
+    height: 1080px;
+    background: #FFFFFF;
+    opacity: 0;
+  }
+
+  .footer { position: absolute; bottom: 56px; left: 100px; display: flex; align-items: center; gap: 16px; }
+  .footer img { height: 40px; width: auto; display: block; }
+  .footer .handle { font-size: 21px; color: #6A6A6A; }
+
+  /* ---------- shared popup-mock chrome (scenes 2 & 3) ---------- */
+  .left { width: 700px; flex-shrink: 0; padding-right: 60px; }
+  .eyebrow { font-size: 22px; font-weight: 600; color: #4FB980; letter-spacing: 0.5px; margin-bottom: 22px; }
+  .headline { font-size: 54px; font-weight: 600; color: #121212; line-height: 1.15; margin-bottom: 26px; }
+  .sub { font-size: 24px; color: #6A6A6A; line-height: 1.55; max-width: 560px; }
+  .right { flex: 1; display: flex; justify-content: center; align-items: center; }
+  .mock-wrap { position: relative; width: 660px; }
+  .mock { border-radius: 0; box-shadow: 0 24px 60px rgba(0,0,0,0.12); overflow: hidden; border: 1px solid #ECECEC;
+    -webkit-mask-image: radial-gradient(circle 26px at 100% 100%, transparent 26px, #000 27px);
+    mask-image: radial-gradient(circle 26px at 100% 100%, transparent 26px, #000 27px); }
+  .mock-badge-wrap { position: absolute; bottom: -26px; right: -26px; width: 52px; height: 52px; z-index: 2; }
+  .mock-badge { display: block; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; }
+  .mock-badge img { width: 100%; height: 100%; display: block; }
+  .real-header { background: #FFFFFF; padding: 12px 22px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #ECECEC; }
+  .real-header .mark { height: 44px; display: block; }
+  .real-header .icons { display: flex; align-items: center; gap: 16px; }
+  .real-header .icons img { width: 17px; height: 17px; display: block; }
+  .popup { border-top: 1px solid #ECECEC; }
+  .popup-body { padding: 26px 24px 0; }
+  .step-badge { width: 26px; height: 26px; border-radius: 50%; background: #EDEDED; color: #6A6A6A; font-size: 14px; font-weight: 600; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .lock-footer { border-top: 1px solid #ECECEC; padding: 18px 24px; display: flex; align-items: center; gap: 9px; font-size: 15px; color: #6E6B7B; }
+  .lock-footer svg { flex-shrink: 0; }
+
+  /* ---------- Scene 1: detect ---------- */
+  #s1 .left { position: absolute; left: 100px; top: 50%; transform: translateY(-50%); }
+  #s1 .right-wrap { position: absolute; right: 0; top: 0; width: 1220px; height: 1080px; display: flex; justify-content: center; align-items: center; }
+  .chatbox { background: #FFFFFF; border: 1px solid #ECECEC; border-radius: 14px; box-shadow: 0 24px 60px rgba(0,0,0,0.10); padding: 30px 34px; min-height: 220px; width: 660px; display: flex; align-items: flex-start; }
+  .chatbox .placeholder-text { font-size: 22px; color: #121212; line-height: 1.55; }
+  #s1 .badge-wrap { position: absolute; bottom: -30px; right: -30px; width: 60px; height: 60px; }
+  #s1 .badge { display: block; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.18); }
+  #s1 .badge img { width: 100%; height: 100%; display: block; }
+
+  /* ---------- Scene 2: grammar ---------- */
+  #s2 .inner { display: flex; align-items: center; height: 1080px; padding: 0 100px; }
+  #s2 .step-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+  #s2 .step-title { font-size: 23px; font-weight: 600; color: #121212; }
+  #s2 .step-sub { font-size: 17px; color: #6E6B7B; margin-top: 3px; }
+  #s2 .fix-list { background: #FBFAFD; border: 1px solid #ECECEC; overflow: hidden; margin-bottom: 22px; }
+  #s2 .fix-row { display: flex; align-items: center; gap: 14px; padding: 13px 20px; border-bottom: 1px solid #ECECEC; }
+  #s2 .fix-row:last-child { border-bottom: none; }
+  #s2 .checkbox { width: 22px; height: 22px; background: #121212; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+  #s2 .checkbox svg { width: 13px; height: 13px; }
+  #s2 .fix-diff { display: flex; align-items: baseline; gap: 9px; font-size: 20px; flex: 1; }
+  #s2 .fix-old { color: #B5B5B5; text-decoration: line-through; }
+  #s2 .fix-arrow { color: #B5B5B5; }
+  #s2 .fix-new { color: #121212; font-weight: 600; }
+  #s2 .fix-tag { font-size: 15px; color: #6E6B7B; }
+  #s2 .actions { display: flex; align-items: center; gap: 22px; padding-bottom: 22px; }
+  #s2 .apply-btn { background: #121212; color: #FFFFFF; font-size: 19px; font-weight: 600; padding: 13px 30px; }
+  #s2 .dismiss { color: #6E6B7B; font-size: 19px; }
+  #s2 .next-step { border-top: 1px solid #ECECEC; padding: 20px 24px; }
+  #s2 .next-step .step-title { margin-left: 38px; margin-bottom: 10px; }
+  #s2 .next-step .step-sub-row { display: flex; align-items: flex-start; gap: 12px; }
+  #s2 .next-step .step-sub-row .step-badge { margin-top: 0; }
+  #s2 .after-label { font-size: 16px; color: #6E6B7B; white-space: nowrap; margin-top: 3px; }
+
+  /* ---------- Scene 3: concise ---------- */
+  #s3 .inner { display: flex; align-items: center; height: 1080px; padding: 0 100px; }
+  #s3 .check-line { display: flex; align-items: center; gap: 8px; color: #4FB980; font-size: 18px; font-weight: 500; padding-bottom: 18px; margin-bottom: 20px; border-bottom: 1px solid #ECECEC; }
+  #s3 .step-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-left: 38px; margin-bottom: 10px; }
+  #s3 .step-title { font-size: 23px; font-weight: 600; color: #121212; }
+  #s3 .stat-line { font-size: 17px; font-weight: 600; color: #6E6B7B; white-space: nowrap; }
+  #s3 .step-sub-row { display: flex; align-items: flex-start; gap: 12px; }
+  #s3 .step-sub { font-size: 17px; color: #6A6A6A; line-height: 1.4; padding-top: 3px; }
+  #s3 .compare { display: flex; margin: 22px 0 24px; background: #FBFAFD; border: 1px solid #ECECEC; }
+  #s3 .compare-box { flex: 1; padding: 18px 20px; }
+  #s3 .compare-box.original { border-right: 1px solid #ECECEC; }
+  #s3 .compare-label { font-size: 16px; font-weight: 700; color: #121212; margin-bottom: 5px; }
+  #s3 .compare-meta { font-size: 13px; color: #9A9A9A; margin-bottom: 11px; }
+  #s3 .compare-text { font-size: 16px; line-height: 1.5; color: #121212; }
+  #s3 .actions { display: flex; justify-content: flex-end; align-items: center; gap: 14px; padding-bottom: 24px; }
+  #s3 .apply-btn { background: #121212; color: #FFFFFF; font-size: 19px; font-weight: 600; padding: 14px 32px; }
+  #s3 .dismiss-btn { background: #F0EFF4; color: #121212; font-size: 19px; font-weight: 600; padding: 14px 26px; }
+
+  /* ---------- Scene 4: apply/terminal ---------- */
+  #s4 .inner { display: flex; align-items: center; height: 1080px; padding: 0 100px; }
+  #s4 .left { width: 620px; }
+  #s4 .sub { max-width: 520px; margin-bottom: 40px; }
+  #s4 .features { display: flex; flex-direction: column; gap: 18px; }
+  #s4 .feature { display: flex; align-items: center; gap: 14px; }
+  #s4 .feature .dot { width: 8px; height: 8px; background: #4FB980; flex-shrink: 0; }
+  #s4 .feature span { font-size: 21px; color: #121212; font-weight: 500; }
+  #s4 .terminal { background: #0D0D0F; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.18); width: 100%; max-width: 900px; }
+  #s4 .term-header { background: #17171A; padding: 18px 26px; display: flex; align-items: center; justify-content: space-between; }
+  #s4 .term-title { color: #C9C9C9; font-family: Consolas, monospace; font-size: 18px; }
+  #s4 .term-controls { display: flex; align-items: center; gap: 12px; color: #55555A; font-size: 18px; }
+  #s4 .term-body { padding: 28px 30px 26px; font-family: Consolas, monospace; font-size: 19px; line-height: 1.6; }
+  #s4 .label { color: #55555A; font-size: 15px; letter-spacing: 1px; margin-bottom: 6px; }
+  #s4 .claude-prompt-wrap { position: relative; }
+  #s4 .claude-rule { height: 1px; background: #3A3A3E; width: 100%; }
+  #s4 .claude-prompt-row { display: flex; align-items: center; gap: 12px; padding: 13px 4px; }
+  #s4 .claude-chevron { color: #C9C9C9; font-size: 19px; }
+  #s4 .claude-prompt-text { color: #F2F2F2; font-size: 19px; }
+  #s4 .claude-status-row { display: flex; align-items: center; padding: 11px 4px 0; font-size: 18px; line-height: 1.5; color: #75757A; }
+  #s4 .claude-status-row .highlight { color: #FFC107; font-weight: 700; }
+  #s4 .claude-status-row .shell-count { color: #00CCCC; font-weight: 700; }
+  #s4 .claude-badge-wrap { position: relative; display: inline-block; width: 28px; height: 28px; vertical-align: middle; margin-left: auto; flex-shrink: 0; }
+  #s4 .claude-badge { display: block; width: 100%; height: 100%; border-radius: 50%; overflow: hidden; }
+  #s4 .claude-badge img { width: 100%; height: 100%; display: block; }
+  #s4 .claude-badge-dot { position: absolute; bottom: -3px; right: -3px; width: 12px; height: 12px; border-radius: 50%; background: #A0E021; border: 2px solid #FFFFFF; box-sizing: border-box; }
+  #s4 .comprsly-strip { border-top: 1px solid #232326; padding: 18px 30px; display: flex; align-items: center; gap: 12px; }
+  #s4 .comprsly-strip img { width: 17px; height: 17px; border-radius: 5px; }
+  #s4 .comprsly-strip .stat-text { font-family: Consolas, monospace; font-size: 16px; font-weight: 600; color: #4FB980; }
+
+  /* ---------- Scene 5: closer ---------- */
+  #s5 { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  #s5 img.mark { height: 120px; width: auto; margin-bottom: 40px; }
+  #s5 .name { font-size: 64px; font-weight: 600; color: #121212; margin-bottom: 18px; }
+  #s5 .tag { font-size: 28px; color: #6A6A6A; margin-bottom: 44px; }
+  #s5 .cta { display: inline-flex; align-items: center; gap: 12px; background: #0B0B0D; color: #FFFFFF; font-size: 24px; font-weight: 600; padding: 20px 40px; }
+</style>
+</head>
+<body>
+
+  <div class="scene" id="s1">
+    <div class="left">
+      <div class="eyebrow">STEP 1 OF 4</div>
+      <div class="headline">It shows up right where you already type.</div>
+      <div class="sub">Comprsly quietly attaches to your chat box or terminal. No setup, no switching apps, it just watches for when you're ready to send.</div>
+    </div>
+    <div class="right-wrap">
+      <div class="mock-wrap">
+        <div class="chatbox">
+          <div class="placeholder-text">So basically I need something written for my team, the launch is definitely going to slip past Friday and it doesnt sound good, keep it calm please</div>
+        </div>
+        <div class="badge-wrap"><div class="badge"><img src="../materials/icons/badge.png" alt=""></div></div>
+      </div>
+    </div>
+    <div class="footer"><img src="../materials/icons/mark_dark.png" alt="Comprsly"><div class="handle">@comprsly</div></div>
+  </div>
+
+  <div class="scene" id="s2">
+    <div class="inner">
+      <div class="left">
+        <div class="eyebrow">STEP 2 OF 4</div>
+        <div class="headline">It catches the typos dictation always leaves.</div>
+        <div class="sub">Grammar and spelling get fixed automatically, before the AI even sees your prompt. Review each fix, or apply them all in one click.</div>
+      </div>
+      <div class="right">
+        <div class="mock-wrap">
+          <div class="mock">
+            <div class="real-header">
+              <img class="mark" src="../materials/icons/mark_dark.png" alt="Comprsly">
+              <div class="icons"><img src="../materials/icons/icon-sliders.png" alt=""><img src="../materials/icons/icon-close.png" alt=""></div>
+            </div>
+            <div class="popup">
+              <div class="popup-body">
+                <div class="step-row">
+                  <div class="step-badge">1</div>
+                  <div><div class="step-title">Fix grammar &amp; clarity</div><div class="step-sub">3 things to clean up &#183; tick the ones to apply</div></div>
+                </div>
+                <div class="fix-list">
+                  <div class="fix-row"><div class="checkbox"><svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,13 9,18 20,6"/></svg></div><div class="fix-diff"><span class="fix-old">i</span><span class="fix-arrow">&#8594;</span><span class="fix-new">I</span></div><div class="fix-tag">grammar</div></div>
+                  <div class="fix-row"><div class="checkbox"><svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,13 9,18 20,6"/></svg></div><div class="fix-diff"><span class="fix-old">dont</span><span class="fix-arrow">&#8594;</span><span class="fix-new">don't</span></div><div class="fix-tag">grammar</div></div>
+                  <div class="fix-row"><div class="checkbox"><svg viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,13 9,18 20,6"/></svg></div><div class="fix-diff"><span class="fix-old">somthing</span><span class="fix-arrow">&#8594;</span><span class="fix-new">something</span></div><div class="fix-tag">spelling</div></div>
+                </div>
+                <div class="actions"><div class="apply-btn">Apply 3 fixes</div><div class="dismiss">Dismiss</div></div>
+              </div>
+              <div class="next-step">
+                <div class="step-title">Make it concise</div>
+                <div class="step-sub-row"><div class="step-badge">2</div><div><div class="step-sub">Shorten this with the local AI, then review the result before applying.</div></div><div class="after-label">after Step 1</div></div>
+              </div>
+              <div class="lock-footer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6E6B7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>100% on your device &middot; nothing you type leaves it</div>
+            </div>
+          </div>
+          <div class="mock-badge-wrap"><div class="mock-badge"><img src="../materials/icons/badge.png" alt=""></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><img src="../materials/icons/mark_dark.png" alt="Comprsly"><div class="handle">@comprsly</div></div>
+  </div>
+
+  <div class="scene" id="s3">
+    <div class="inner">
+      <div class="left">
+        <div class="eyebrow">STEP 3 OF 4</div>
+        <div class="headline">Then it offers a shorter version, before you send.</div>
+        <div class="sub">Comprsly rewrites rambling into a clean, direct prompt, same meaning, just less of it. Compare both, apply only if nothing important was cut.</div>
+      </div>
+      <div class="right">
+        <div class="mock-wrap">
+          <div class="mock">
+            <div class="real-header">
+              <img class="mark" src="../materials/icons/mark_dark.png" alt="Comprsly">
+              <div class="icons"><img src="../materials/icons/icon-sliders.png" alt=""><img src="../materials/icons/icon-close.png" alt=""></div>
+            </div>
+            <div class="popup">
+              <div class="popup-body">
+                <div class="check-line">&#10003; No grammar or spelling issues found</div>
+                <div class="step-title-row"><div class="step-title">Make it concise</div><div class="stat-line">&#8595; 14 tokens &#183; 38% shorter</div></div>
+                <div class="step-sub-row"><div class="step-badge">2</div><div class="step-sub">Compare both sides. Apply only if nothing important was cut.</div></div>
+                <div class="compare">
+                  <div class="compare-box original"><div class="compare-label">Original</div><div class="compare-meta">27 words &#183; 37 tokens</div><div class="compare-text">So basically I need something written for my team, the launch is definitely going to slip past Friday and it doesn't sound good, keep it calm please!</div></div>
+                  <div class="compare-box"><div class="compare-label">Optimized</div><div class="compare-meta">17 words &#183; 23 tokens</div><div class="compare-text">Write a calm email telling my team the launch will slip past Friday. Propose a new timeline.</div></div>
+                </div>
+                <div class="actions"><div class="apply-btn">Apply</div><div class="dismiss-btn">Dismiss</div></div>
+              </div>
+              <div class="lock-footer"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6E6B7B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>100% on your device &middot; nothing you type leaves it</div>
+            </div>
+          </div>
+          <div class="mock-badge-wrap"><div class="mock-badge"><img src="../materials/icons/badge.png" alt=""></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><img src="../materials/icons/mark_dark.png" alt="Comprsly"><div class="handle">@comprsly</div></div>
+  </div>
+
+  <div class="scene" id="s4">
+    <div class="inner">
+      <div class="left">
+        <div class="eyebrow">STEP 4 OF 4</div>
+        <div class="headline">One click. A clean prompt goes out.</div>
+        <div class="sub">Same intent, none of the filler. Comprsly works the same way whether you're in a chat box or a terminal AI agent.</div>
+        <div class="features">
+          <div class="feature"><div class="dot"></div><span>Works in ChatGPT, Claude, Gemini, Copilot &amp; more</span></div>
+          <div class="feature"><div class="dot"></div><span>Also works in terminal agents like Claude Code</span></div>
+          <div class="feature"><div class="dot"></div><span>Free &#183; local &#183; no account needed</span></div>
+        </div>
+      </div>
+      <div class="right">
+        <div class="terminal">
+          <div class="term-header"><div class="term-title">Windows Terminal</div><div class="term-controls"><span>&#9472;</span><span>&#9633;</span><span>&#10005;</span></div></div>
+          <div class="term-body">
+            <div class="label">WHAT COMPRSLY SENDS</div>
+            <div class="claude-prompt-wrap">
+              <div class="claude-rule"></div>
+              <div class="claude-prompt-row"><span class="claude-chevron">&#8250;</span><span class="claude-prompt-text">Remove all console.log statements from the codebase.</span></div>
+              <div class="claude-rule"></div>
+            </div>
+            <div class="claude-status-row">
+              <span><span class="highlight">&#9197;&#9197; auto mode on</span> &#183; <span class="shell-count">1 shell</span></span>
+              <span class="claude-badge-wrap"><span class="claude-badge"><img src="../materials/icons/badge.png" alt=""></span><span class="claude-badge-dot"></span></span>
+            </div>
+          </div>
+          <div class="comprsly-strip"><img src="../materials/icons/badge.png" alt=""><span class="stat-text">22 tokens saved &#183; 63% shorter</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="footer"><img src="../materials/icons/mark_dark.png" alt="Comprsly"><div class="handle">@comprsly</div></div>
+  </div>
+
+  <div class="scene" id="s5">
+    <img class="mark" src="../materials/icons/mark_dark.png" alt="Comprsly">
+    <div class="name">Comprsly</div>
+    <div class="tag">Say everything. Send less.</div>
+    <div class="cta">Free on the Microsoft Store</div>
+  </div>
+
+<script>
+  // Timeline in ms. Each scene holds, then crossfades into the next.
+  var FADE = 500;
+  var HOLD = 4500;
+  var scenes = ['s1','s2','s3','s4','s5'];
+  var starts = [0, HOLD, HOLD*2, HOLD*3, HOLD*4];
+  var TOTAL = HOLD * 4 + HOLD; // last scene also holds HOLD ms
+
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+
+  function render(t) {
+    for (var i = 0; i < scenes.length; i++) {
+      var el = document.getElementById(scenes[i]);
+      var start = starts[i];
+      var end = start + HOLD;
+      var op = 0;
+      if (t >= start && t < end) {
+        var into = t - start;
+        var fromEnd = end - t;
+        if (into < FADE) op = into / FADE;
+        else if (fromEnd < FADE && i < scenes.length - 1) op = fromEnd / FADE;
+        else op = 1;
+      }
+      if (t >= end && i === scenes.length - 1) op = 1; // hold last frame
+      el.style.opacity = clamp(op, 0, 1);
+    }
+  }
+
+  window.setTime = function(ms) { render(ms); };
+  window.TOTAL_MS = TOTAL;
+  render(0);
+</script>
+</body>
+</html>
