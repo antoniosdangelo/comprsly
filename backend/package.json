@@ -1,0 +1,16 @@
+{
+  "name": "comprsly-website",
+  "version": "1.0.0",
+  "description": "Comprsly website server (comprsly.com): pages, download tracking and the private stats page",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "postal-mime": "^2.7.5"
+  }
+}

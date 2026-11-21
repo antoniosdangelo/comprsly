@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { background: #FFFFFF; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+
+  #card {
+    width: 1080px;
+    height: 1350px;
+    background: #FFFFFF;
+    display: flex;
+    flex-direction: column;
+    padding: 90px 90px 70px;
+  }
+
+  .eyebrow {
+    font-size: 24px;
+    font-weight: 600;
+    color: #6A6A6A;
+    margin-bottom: 26px;
+  }
+
+  .headline {
+    font-size: 52px;
+    font-weight: 600;
+    color: #121212;
+    line-height: 1.15;
+    margin-bottom: 38px;
+  }
+
+  .mock-wrap {
+    position: relative;
+  }
+
+  /* real screenshot, 2026-07-28 (clearer second reference): the badge
+     doesn't float apart from the card with a gap, it nests directly into a
+     concave notch cut into the card's own corner, the white edge curves
+     around roughly the top-left of the badge's circle before giving way to
+     whatever's behind it. Built with a mask radial-gradient hole rather
+     than a plain rounded corner. */
+  /* real screenshots, 2026-07-29: the real app has square edges
+     everywhere, only genuinely circular elements (the step-number
+     badges, the floating C/ badge) are round. border-radius:0 here, the
+     concave notch below is unaffected either way, it's cut by the mask
+     regardless of the base corner radius. */
+  .mock {
+    border-radius: 0;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.10);
+    overflow: hidden;
+    border: 1px solid #ECECEC;
+    -webkit-mask-image: radial-gradient(circle 32px at 100% 100%, transparent 32px, #000 33px);
+    mask-image: radial-gradient(circle 32px at 100% 100%, transparent 32px, #000 33px);
+  }
+
+  .mock-badge-wrap {
+    position: absolute;
+    bottom: -32px;
+    right: -32px;
+    width: 64px;
+    height: 64px;
+    z-index: 2;
+  }
+
+  .mock-badge {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    overflow: hidden;
+  }
+
+  .mock-badge img { width: 100%; height: 100%; display: block; }
+
+  /* Comprsly's own real in-app header, matches a real screenshot of the
+     actual app exactly (confirmed 2026-07-28): bare glyph top-left, sliders
+     + close icons top-right. No host-app window chrome above this anymore,
+     the real popup doesn't have one, this IS the top of the window. */
+  .real-header {
+    background: #FFFFFF;
+    /* vertical padding tightened so the row's total height (82px) stays
+       the same as before the mark grew, 14+54+14=82, matches the
+       original 22+38+22=82 */
+    padding: 14px 26px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #ECECEC;
+  }
+
+  .real-header .mark { height: 54px; display: block; }
+
+  .real-header .icons {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+
+  .real-header .icons img { width: 20px; height: 20px; display: block; }
+
+  .popup {
+    border-top: 1px solid #ECECEC;
+  }
+
+  .popup-body { padding: 32px 30px 0; }
+
+  /* real screenshot, 2026-07-28: the checkmark line is green, not black,
+     and has its own full-width divider below it separating it from the
+     next step */
+  .check-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #4FB980;
+    font-size: 21px;
+    font-weight: 500;
+    padding-bottom: 22px;
+    margin-bottom: 26px;
+    border-bottom: 1px solid #ECECEC;
+  }
+
+  /* real screenshot: the title sits alone on its own line, the numbered
+     badge pairs with the SUBTITLE below it, not the title. The stat line
+     floats top-right, level with the subtitle row. */
+  .step-title-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 20px;
+    /* = .step-badge width (32) + .step-sub-row gap (14) below, lines up the title with the subtitle's text, not the badge */
+    margin-left: 46px;
+    margin-bottom: 12px;
+  }
+
+  .step-title {
+    font-size: 28px;
+    font-weight: 600;
+    color: #121212;
+  }
+
+  /* sampled directly from a real screenshot, 2026-07-28: rgb(110,107,123),
+     a muted slate-violet, not the green used for the grammar checkmark.
+     Compression stats and grammar confirmations are two different colors
+     in the real app, don't unify them. */
+  .stat-line {
+    font-size: 20px;
+    font-weight: 600;
+    color: #6E6B7B;
+    white-space: nowrap;
+  }
+
+  .step-sub-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .step-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #EDEDED;
+    color: #6A6A6A;
+    font-size: 17px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .step-sub {
+    font-size: 20px;
+    color: #6A6A6A;
+    line-height: 1.4;
+    padding-top: 4px;
+  }
+
+  .compare {
+    display: flex;
+    gap: 0;
+    margin: 28px 0 30px;
+    /* same faint violet tint as the stat line, sampled from the real
+       screenshot's compare-box background: rgb(251,250,253) */
+    background: #FBFAFD;
+    border-radius: 0;
+    border: 1px solid #ECECEC;
+  }
+
+  .compare-box {
+    flex: 1;
+    padding: 22px 24px;
+  }
+
+  .compare-box.original {
+    border-right: 1px solid #ECECEC;
+  }
+
+  .compare-label {
+    font-size: 19px;
+    font-weight: 700;
+    color: #121212;
+    margin-bottom: 6px;
+  }
+
+  .compare-meta {
+    font-size: 16px;
+    color: #9A9A9A;
+    margin-bottom: 14px;
+  }
+
+  .compare-text {
+    font-size: 20px;
+    line-height: 1.5;
+    color: #121212;
+  }
+
+  .actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 16px;
+    padding-bottom: 30px;
+  }
+
+  .apply-btn {
+    background: #121212;
+    color: #FFFFFF;
+    font-size: 24px;
+    font-weight: 600;
+    padding: 18px 40px;
+    border-radius: 0;
+  }
+
+  .dismiss-btn {
+    background: #F0EFF4;
+    color: #121212;
+    font-size: 24px;
+    font-weight: 600;
+    padding: 18px 34px;
+    border-radius: 0;
+  }
+
+  .lock-footer {
+    border-top: 1px solid #ECECEC;
+    padding: 22px 30px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 19px;
+    /* same violet-slate confirmed across checklist-card.html, this was
+       still the old plain gray, fixing it while in here */
+    color: #6E6B7B;
+  }
+
+  .lock-footer svg { flex-shrink: 0; }
+
+  .footer {
+    margin-top: auto;
+    padding-top: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .brand img { height: 52px; width: auto; display: block; }
+
+  .handle {
+    font-size: 26px;
+    color: #6A6A6A;
+  }
+</style>
+</head>
+<body>
+  <div id="card">
+    <div class="eyebrow">@comprsly</div>
+    <div class="headline">Say everything.<br>Send less.</div>
+
+    <div class="mock-wrap">
+    <div class="mock">
+      <div class="real-header">
+        <img class="mark" src="../materials/icons/mark_dark.png" alt="Comprsly">
+        <div class="icons">
+          <img src="../materials/icons/icon-sliders.png" alt="">
+          <img src="../materials/icons/icon-close.png" alt="">
+        </div>
+      </div>
+      <div class="popup">
+        <div class="popup-body">
+          <div class="check-line">&#10003; No grammar or spelling issues found</div>
+
+          <div class="step-title-row">
+            <div class="step-title">Make it concise</div>
+            <div class="stat-line">&#8595; 14 tokens &#183; 38% shorter</div>
+          </div>
+          <div class="step-sub-row">
+            <div class="step-badge">2</div>
+            <div class="step-sub">Compare both sides. Apply only if nothing important was cut.</div>
+          </div>
+
+          <div class="compare">
+            <div class="compare-box original">
+              <div class="compare-label">Original</div>
+              <div class="compare-meta">27 words &#183; 37 tokens</div>
+              <div class="compare-text">So basically I need something written for my team, the launch is definitely going to slip past Friday and it doesn't sound good, keep it calm please!</div>
+            </div>
+            <div class="compare-box">
+              <div class="compare-label">Optimized</div>
+              <div class="compare-meta">17 words &#183; 23 tokens</div>
+              <div class="compare-text">Write a calm email telling my team the launch will slip past Friday. Propose a new timeline.</div>
+            </div>
+          </div>
+
+          <div class="actions">
+            <div class="apply-btn">Apply</div>
+            <div class="dismiss-btn">Dismiss</div>
+          </div>
+        </div>
+        <div class="lock-footer">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6A6A6A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+          100% on your device &mdash; nothing you type leaves it
+        </div>
+      </div>
+
+    </div>
+      <div class="mock-badge-wrap">
+        <div class="mock-badge"><img src="../materials/icons/badge.png" alt=""></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <div class="brand">
+        <img src="../materials/icons/mark_dark.png" alt="Comprsly">
+      </div>
+      <div class="handle">@comprsly</div>
+    </div>
+  </div>
+</body>
+</html>
