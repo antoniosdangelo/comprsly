@@ -1,0 +1,37 @@
+# Comprsly root .gitignore. Code and documents go in, secrets and rebuildable bulk stay out.
+
+# Secrets, never commit
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+*.pem
+*.key
+*.pfx
+*credentials*
+
+# Rebuildable bulk
+node_modules/
+__pycache__/
+*.pyc
+.wrangler/
+desktop/build/
+desktop/dist/
+desktop/installer-output/
+
+# Large media and packages
+*.mp4
+*.mov
+*.zip
+*.msix
+*.exe
+
+# Local tool state and OS junk
+.claude/
+*.log
+@AutomationLog.txt
+Thumbs.db
+desktop.ini
+.DS_Store
