@@ -1,7 +1,0 @@
-uiautomation
-comtypes
-pystray
-Pillow
-onnxruntime-genai
-pywebview
-pythonnet
