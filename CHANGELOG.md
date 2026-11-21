@@ -21,6 +21,7 @@ Older commits keep their original messages; this file explains them so nothing h
 - **daeffeb** Added the website (`frontend/` pages, `backend/` server), the browser extension, the terminal helper, docs and tools, plus the README, branch rules, ignore rules and the settings list (names only).
 - **8290b1f** The repo moved from the Comprsly organization to Antonio's account, so links in the docs now point at `antoniosdangelo/comprsly`.
 - Naming and descriptions: README description matches the GitHub description, website package renamed `comprsly-website`, and this change log added.
+- README now explains what Comprsly does, how to install it from the Microsoft Store, and that it needs no API key (everything runs on the user's PC).
 
 ## How updates work from now on
 New work goes to `sandbox` first, gets tested, and only then is merged into `main` (production) when Antonio approves. See `BRANCHING.md`.
