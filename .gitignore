@@ -44,3 +44,6 @@ frontend/dist/
 # Playwright run artifacts (baselines in test/__screenshots__ ARE committed)
 frontend/test-results/
 frontend/playwright-report/
+
+# Surface probe output (local diagnostic, not a deliverable)
+desktop/probe-surfaces.jsonl
