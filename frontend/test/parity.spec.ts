@@ -50,7 +50,13 @@ test('parity: every section is present and in order', async ({ page }) => {
     'Every word has a price now.',
     'Where you already chat.',
     'It works in the terminal too.',
-    'Ready to use it everywhere?',
+    // Renamed in the redesign, from "Ready to use it everywhere?". This
+    // section carries id="privacy" and is what the Privacy nav link has always
+    // pointed at, so the old heading described a call to action while the link
+    // promised privacy. Every section still exists; one got an honest name.
+    // Against production this expectation fails by design: the live page still
+    // has the old heading until the redesign ships.
+    'Nothing you type leaves your PC.',
     'Questions',
   ])
 })
