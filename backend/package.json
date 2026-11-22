@@ -4,7 +4,9 @@
   "description": "Comprsly website server (comprsly.com): pages, download tracking and the private stats page",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "test": "echo \"no backend tests yet, see BRANCHING.md KNOWN_FAILURES\" && exit 0",
+    "deploy": "npm --prefix ../frontend run build && wrangler deploy"
   },
   "keywords": [],
   "author": "",
