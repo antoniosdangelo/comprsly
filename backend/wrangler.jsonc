@@ -8,10 +8,15 @@
     { "pattern": "www.comprsly.com", "custom_domain": true }
   ],
   "assets": {
-    "directory": "../frontend/public",
+    "directory": "../frontend/dist",
     "binding": "ASSETS",
     "not_found_handling": "none",
     "html_handling": "auto-trailing-slash",
+    // Deliberately `true`, not a path list. Every response, static assets
+    // included, has to pass through src/index.js so the security headers get
+    // applied. Narrowing this to an array would let asset requests bypass the
+    // Worker and silently drop those headers, which is exactly the bug that
+    // cost a day back on 2026-07-27 before this flag was added.
     "run_worker_first": true
   },
   "d1_databases": [
