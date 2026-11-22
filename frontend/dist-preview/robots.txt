@@ -1,6 +1,0 @@
-User-agent: *
-Allow: /
-Disallow: /stats
-Disallow: /api/
-
-Sitemap: https://comprsly.com/sitemap.xml
