@@ -58,20 +58,69 @@ only toggle in Settings and it covers everything.
 | Claude desktop | Electron, often exposes no accessible control | probe first; may need the guessed position path |
 | ChatGPT desktop | same | same |
 
-### The VS Code finding, in full
+### VS Code: measured, and now fully specified
 
-An earlier reading of `debug.log` showed `no editable text field in code.exe`
-and was taken to mean VS Code's input is unreadable. **That was wrong.** The
-probe, which imports the product's own functions rather than guessing, reports:
+Measured 2026-11-22 with `tools_probe_surfaces.py` and
+`tools_scan_surfaces.py`. Not inferred.
+
+**The focused control in VS Code's integrated terminal:**
 
 ```
-process     control       verdict
-code.exe    EditControl   HIDDEN (app not recognized)
+EditControl  7x17  rect=(422,-467,429,-450)
+name='Terminal 1, [kbd] Orchestrator  Run the command: Toggle Screen Reader...'
 ```
 
-The field is readable. The app is simply not on the list. That makes VS Code a
-much smaller job than it looked, with the real work being to avoid lighting up
-in the editor itself.
+Three things fall out of that:
+
+1. **VS Code is recognisable.** `app_label_for()` returns nothing for
+   `code.exe`, which is the only reason the badge never appears. The input is
+   readable the whole time.
+
+2. **The integrated terminal announces itself.** The accessible name begins
+   `Terminal <n>,` whenever focus is in the integrated terminal. That is the
+   discriminator for the hard part, telling the terminal apart from the code
+   editor, so the badge never turns up while you are writing code. It is the
+   same mechanism the product already uses for Gemini's Chrome side panel via
+   `KNOWN_SIDE_PANEL_NAME_PREFIXES`.
+
+3. **The focused rect is the caret, not the box.** 7x17 pixels, and it moves
+   horizontally as you type: successive readings came back at x=1244, 1409,
+   1541, 1629, 1684, 1772, all at the same height. Anchoring to it would make
+   the badge chase the cursor. The terminal pane is two levels up the ancestor
+   chain, a `GroupControl` at 1001x612. The parent directly above the caret
+   shares the caret's own 7x17 rect, so the walk has to continue past it.
+
+**Implementation shape:**
+
+- recognise `code.exe` in `app_label_for`
+- focused control name starts with `Terminal ` → treat as a terminal surface
+- otherwise → stay hidden, it is the editor
+- anchor to the first ancestor whose rect is substantially larger than the
+  caret, not to the focused control
+
+Cursor and Windsurf are both VS Code forks, so the same approach should carry
+over. Worth probing each to confirm the name prefix survives their rebranding.
+
+### An earlier wrong conclusion, corrected twice
+
+Worth recording, because the same mistake nearly got made twice in one hour.
+
+**First wrong conclusion:** `debug.log` said `no editable text field in
+code.exe`, which was taken to mean VS Code's input is unreadable. The focused
+probe disproved it: a real `EditControl` is there.
+
+**Second wrong conclusion:** the first version of `tools_scan_surfaces.py`
+counted `DocumentControl` as an input and duly reported VS Code as
+`ADDABLE: exposes a real input`. That control was the whole 1920x1032 window,
+which is exactly the false positive `main.py` already rejects in its
+`page_level` branch. The scanner now excludes window level controls and applies
+the same 60% of window backstop, after which VS Code correctly reports
+`HARD: no readable input exposed` on an unfocused walk.
+
+**Both wrong for the same reason:** a tree walked without focus and a tree
+walked with focus are different trees. Electron builds the accessible subtree
+lazily. The unfocused scan is useful for a quick inventory; only the focused
+probe can be trusted for a verdict on a specific app.
 
 ---
 
