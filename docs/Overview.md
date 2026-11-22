@@ -1,6 +1,6 @@
 # Comprsly
 
-**Status:** Live product, submitted to the Microsoft Store (v1.0.1.0 package, currently In Certification as of 2026-07-28) — website at [comprsly.com](https://comprsly.com), name settled as **Comprsly** (renamed from Compresly/Token Saver earlier in development)
+**Status (refreshed 2026-11-22):** Live product. **Source version is `APP_VERSION = "1.0.67"`**, read from `desktop/main.py`, not the 1.0.0 this file used to claim. Store state is unverified since 2026-07-30, when Submission 1 was confirmed live and Submission 2 was sitting in draft waiting on a new MSIX, so check Partner Center before trusting any Store claim here. The project now lives in one repo at `C:\Dev\Claude Code\Projects\Comprsly`; see `docs/Build.md`'s CURRENT STATE block for the full path translation. Original July status line follows for history: submitted to the Microsoft Store (v1.0.1.0 package, In Certification as of 2026-07-28) — website at [comprsly.com](https://comprsly.com), name settled as **Comprsly** (renamed from Compresly/Token Saver earlier in development)
 **Started:** 2026-07-20 · **Last updated:** 2026-07-28 (status line only — see `Build.md` for everything since 2026-07-21, this file's own thesis content below is otherwise unchanged and may be stale on specifics)
 **One-liner:** Grammarly for token efficiency. Watches whatever text box you're typing in, fixes spelling and grammar, and compresses the whole prompt with a local AI so you send fewer tokens. 100% local, zero backend.
 
