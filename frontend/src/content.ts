@@ -111,7 +111,7 @@ export const FAQ = [
   },
   {
     q: 'Does Comprsly send my prompts anywhere?',
-    a: 'No. Everything runs on your device. The only network use is downloading the app itself.',
+    a: 'No. Your prompts never leave your PC, and nothing you type is written to disk: the only thing saved is a count of tokens saved, with no text in it. Comprsly uses the network for two things, getting the app and its model, and checking the Microsoft Store for updates. Neither one sends anything you have written.',
   },
   {
     q: 'What am I downloading?',
