@@ -47,3 +47,6 @@ frontend/playwright-report/
 
 # Surface probe output (local diagnostic, not a deliverable)
 desktop/probe-surfaces.jsonl
+
+# Relative-path build used only for artifact previews
+frontend/dist-preview/
