@@ -1,0 +1,34 @@
+name: Checks
+# Free checks on every pull request and on sandbox: code compiles, scripts parse, no secrets.
+on:
+  pull_request:
+  push:
+    branches: [sandbox]
+permissions:
+  contents: read
+jobs:
+  code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Desktop app compiles
+        run: python -m py_compile desktop/*.py
+      - name: Extension and terminal scripts parse
+        run: for f in extension/*.js terminal/*.js; do node --check "$f"; done
+      - name: Extension manifest is valid
+        run: python -c "import json; json.load(open('extension/manifest.json'))"
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
