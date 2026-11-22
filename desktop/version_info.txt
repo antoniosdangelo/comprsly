@@ -6,8 +6,8 @@
 # though every on-screen string was already Comprsly.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 67, 0),
-    prodvers=(1, 0, 67, 0),
+    filevers=(1, 1, 0, 0),
+    prodvers=(1, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -23,12 +23,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'Comprsly'),
             StringStruct('FileDescription', 'Comprsly'),
-            StringStruct('FileVersion', '1.0.67'),
+            StringStruct('FileVersion', '1.1.0'),
             StringStruct('InternalName', 'Comprsly'),
             StringStruct('LegalCopyright', ''),
             StringStruct('OriginalFilename', 'Comprsly.exe'),
             StringStruct('ProductName', 'Comprsly'),
-            StringStruct('ProductVersion', '1.0.67'),
+            StringStruct('ProductVersion', '1.1.0'),
           ]
         )
       ]
