@@ -6,7 +6,7 @@
 ; admin/UAC prompt is needed.
 
 #define MyAppName "Comprsly"
-#define MyAppVersion "1.0.67"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "Comprsly"
 ; Renamed from TokenSaver.exe 2026-07-21. The exe file name is what Windows
 ; shows in Task Manager and the taskbar when there's no version resource,
@@ -91,7 +91,7 @@ DisableDirPage=yes
 DisableReadyPage=no
 AppVerName={#MyAppName} {#MyAppVersion}
 VersionInfoDescription=Comprsly setup
-VersionInfoVersion=1.0.67.0
+VersionInfoVersion=1.1.0.0
 ; In-place upgrade support (real ask 2026-07-22): a re-run of setup over an
 ; existing install must replace the locked Comprsly.exe. This is handled by
 ; StopRunningApp() in PrepareToInstall() (a direct taskkill), NOT by Inno's
