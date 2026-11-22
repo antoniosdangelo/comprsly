@@ -51,7 +51,9 @@ only toggle in Settings and it covers everything.
 
 | Surface | Why not | What it would take |
 |---|---|---|
-| **VS Code** | **Not a recognition problem.** `tools_probe_surfaces.py` confirms VS Code exposes a proper focused `EditControl`, readable right now. `app_label_for()` simply returns nothing for `code.exe`. | Recognise `code.exe`, then tell the integrated terminal and chat panes apart from the code editor. Without that split the badge would appear while you are writing code, which is worse than not supporting it. |
+| ~~VS Code~~ | **Implemented 2026-11-22**, see below. Not shipped: needs a rebuild and a Store cycle. |
+| ~~Cursor~~ / ~~Windsurf~~ | Implemented alongside VS Code, same code path. **Unverified**, neither was running to probe. |
+| **(original note)** | **Not a recognition problem.** `tools_probe_surfaces.py` confirms VS Code exposes a proper focused `EditControl`, readable right now. `app_label_for()` simply returns nothing for `code.exe`. | Recognise `code.exe`, then tell the integrated terminal and chat panes apart from the code editor. Without that split the badge would appear while you are writing code, which is worse than not supporting it. |
 | Cursor | same shape as VS Code, both are Electron and VS Code derived | same work, probably the same fix |
 | Windsurf | same | same |
 | LM Studio | never probed | run the probe while focused on its chat box |
@@ -90,16 +92,36 @@ Three things fall out of that:
    chain, a `GroupControl` at 1001x612. The parent directly above the caret
    shares the caret's own 7x17 rect, so the walk has to continue past it.
 
-**Implementation shape:**
+**Implemented 2026-11-22**, on branch `desktop/vscode-surface`:
 
-- recognise `code.exe` in `app_label_for`
-- focused control name starts with `Terminal ` → treat as a terminal surface
-- otherwise → stay hidden, it is the editor
-- anchor to the first ancestor whose rect is substantially larger than the
-  caret, not to the focused control
+- `code.exe`, `cursor.exe` and `windsurf.exe` joined `TERMINAL_HOST_PROCESSES`,
+  so they pass through the same AI-CLI-descendant gate as every other
+  terminal. A VS Code window with no AI CLI running under it stays inactive.
+- `_vscode_focus_is_terminal()` additionally requires the focused control's
+  name to START WITH `Terminal `. Prefix, never substring: this file already
+  carries a bug from an anywhere-in-the-title rule firing on the wrong pages.
+- `_vscode_terminal_pane_rect()` walks up from the caret to the pane,
+  continuing past the parent that shares the caret's own rect.
+- Everything fails closed. No focused control, an unreadable name, a UIA
+  exception: all return hidden, because a badge over somebody's source code is
+  worse than no VS Code support.
 
-Cursor and Windsurf are both VS Code forks, so the same approach should carry
-over. Worth probing each to confirm the name prefix survives their rebranding.
+Confirmed live on this machine:
+
+```
+foreground process:      code.exe
+focus is terminal pane:  True
+app_label_for ->         'Claude Code'
+focused (caret):         EditControl 7x17
+resolved pane:           1001x850
+```
+
+`test_vscode_surface.py` covers it: 14 tests, weighted to the negative cases
+(editor, Settings, empty name, substring near-miss, no control, UIA raising).
+
+**Cursor and Windsurf are unverified.** They are VS Code forks on the same code
+path, but neither was running to probe, so nobody has confirmed the `Terminal `
+prefix survives their rebranding. Probe before claiming them anywhere.
 
 ### An earlier wrong conclusion, corrected twice
 
