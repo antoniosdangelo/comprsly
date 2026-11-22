@@ -6,6 +6,7 @@ on:
     branches: [sandbox]
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   code:
     runs-on: ubuntu-latest
