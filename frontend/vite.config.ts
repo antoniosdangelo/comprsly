@@ -13,7 +13,12 @@ export default defineConfig({
     assetsInlineLimit: 2048,
   },
   server: {
-    port: 5173,
+    // 5174, not Vite's default 5173. The Personal Website project runs on
+    // 5173, and a Playwright run here once silently attached to it and
+    // compared Comprsly against someone else's homepage. strictPort makes a
+    // clash fail loudly instead of sliding to the next free port.
+    port: 5174,
+    strictPort: true,
     // Hand the API, redirect and stats routes to `wrangler dev` so local dev
     // exercises the real Worker instead of a mock.
     proxy: {
