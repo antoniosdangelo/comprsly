@@ -1,0 +1,23 @@
+# Keep line endings stable regardless of who or what edits a file.
+#
+# Added 2026-11-22 after a tooling slip rewrote desktop/main.py from LF to
+# CRLF, turning a 92 line change into a 11,375 line diff that buried the real
+# edit. Normalising here means git stores LF and the working tree gets LF, so
+# an editor or script with different defaults cannot repeat it.
+
+* text=auto eol=lf
+
+# Binary, never touch.
+*.png binary
+*.ico binary
+*.jpg binary
+*.bmp binary
+*.pdf binary
+*.mp4 binary
+*.msix binary
+*.exe binary
+*.onnx binary
+
+# Windows-only files that genuinely want CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
