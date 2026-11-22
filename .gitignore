@@ -34,3 +34,19 @@ desktop/installer-output/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Vite build output, rebuilt by `npm run build` on every deploy
+frontend/dist/
+
+# Local git worktrees
+.worktrees/
+
+# Playwright run artifacts (baselines in test/__screenshots__ ARE committed)
+frontend/test-results/
+frontend/playwright-report/
+
+# Surface probe output (local diagnostic, not a deliverable)
+desktop/probe-surfaces.jsonl
+
+# Relative-path build used only for artifact previews
+frontend/dist-preview/
