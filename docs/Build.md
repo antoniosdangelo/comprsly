@@ -1,5 +1,25 @@
 # Comprsly — Build & Technical State
 
+> ## CURRENT STATE, refreshed 2026-11-22 (read this before anything below it)
+>
+> **Source version is `APP_VERSION = "1.0.67"`** in `desktop/main.py`, read straight from the file. Every "1.0.0" and "0.9.x" claim below is stale history from July, including the Status line immediately after this block. The badge positioning marathon of 2026-08-03 is what carried the version from ~1.0.22 to 1.0.67, and that work is complete and confirmed across ChatGPT, Claude (including Claude Code), Gemini (including the Chrome side panel), Perplexity, Grok, Copilot and DeepSeek.
+>
+> **Everything now lives in one repo at `C:\Dev\Claude Code\Projects\Comprsly`** (reorganized 2026-11-21). Path translation for every stale reference below:
+>
+> | This file says | It is now |
+> |---|---|
+> | `Ventures/Comprsly/` | `Projects/Comprsly/` |
+> | `Ventures/Comprsly/website/` | `backend/` (the Worker) plus `frontend/public/` (the pages) |
+> | `Ventures/Comprsly/Build.md` | `docs/Build.md` |
+> | project root `*.md` and `*prompt.md` | `docs/` |
+> | `tools_unpack_artifact_bundle.py` | `tools/` |
+>
+> Deploy is now `npx wrangler deploy` from `backend/`, from `main` only, and only after Antonio types "deploy". Branch rules are in `BRANCHING.md`, agent ownership in `AGENTS.md`, plain language change history in `CHANGELOG.md`.
+>
+> **Microsoft Store status is NOT verified by this refresh.** The last real Partner Center check was 2026-07-30 (§10z): Submission 1 live in the Store, Submission 2 back in draft waiting on a new debugged MSIX. Nearly four months have passed with no check. Verify in Partner Center directly before acting on any Store claim in this file.
+>
+> **One known copy bug, fixed in the repo on 2026-11-22 but NOT yet deployed:** comprsly.com's terminal section claimed you switch Windows Terminal, PowerShell and your Git client on individually in Settings. No such toggles exist. `APP_CATEGORIES = ("ai_chat",)` is the only one, and terminal support is detected automatically via `TERMINAL_HOST_PROCESSES`. Branch `frontend/terminal-copy`. The live site still serves the wrong line until a deploy.
+
 **Last updated:** 2026-07-30 (website/Store-submission-side session). **This update (§10z): the v1.0.1.0 submission described in §10y as "In Certification" has since PASSED and is now confirmed LIVE in the Microsoft Store** (verified directly via Partner Center at the start of this session — "In Microsoft Store" badge, read-only "Store presence" section — not assumed from any recap). **This session then built and submitted a second, listing-only update ("Submission 2"): a new interactive Store trailer video, 5 new screenshots, and a required 16:9 hero image, replacing the app's original 6 screenshots — submitted, then CANCELED by Antonio the same day** to bundle in a new, freshly-debugged MSIX package rather than ship two separate certification cycles back to back. Submission 2 is back in **draft**, all listing assets preserved, waiting on a new package upload. Full detail in §10z. **Lesson repeated again, still true: always verify current version/state directly from files (or Partner Center itself) before trusting a recap, including this one.**
 **Status:** Source version is still **1.0.0** (`main.py APP_VERSION`) / packaged as **v1.0.1.0** — unchanged by this session, no code work happened here. **Submission 1 (v1.0.1.0) is live in the Microsoft Store.** **Submission 2 (new screenshots, trailer, thumbnail, hero art) is back in Draft**, canceled from certification 2026-07-30 specifically so a new debugged package can be bundled into the same submission before resubmitting. See §10z for the full build/upload record and RESUME POINT item 6 (rewritten again) for exact current state.
 **Live right now:** [comprsly.com](https://comprsly.com) + [comprsly.com/privacy/](https://comprsly.com/privacy/) on Cloudflare Workers. Homepage updated three more times this session (footer-social mobile layout fixed twice, converging on a flex-`order`-based reorder; one copy trim; a new FAQ entry — "Is there a Mac or Linux version?" — wired to a new `openFaq()` deep-link function), each verified via raw `curl` against production before/after deploying via `npx wrangler deploy`. Full detail in §10x. **Known open bug, still NOT resolved:** the "Coming soon" popup mobile-dismiss issue from §10s, no new information this session. `contact@comprsly.com` relays through Resend, confirmed working per §10t.
