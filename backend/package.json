@@ -4,14 +4,15 @@
   "description": "Comprsly website server (comprsly.com): pages, download tracking and the private stats page",
   "main": "index.js",
   "scripts": {
-    "dev": "wrangler dev",
-    "test": "echo \"no backend tests yet, see BRANCHING.md KNOWN_FAILURES\" && exit 0",
+    "dev": "wrangler dev --port 8792",
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
     "deploy": "npm --prefix ../frontend run build && wrangler deploy"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "dependencies": {
     "postal-mime": "^2.7.5"
   }
