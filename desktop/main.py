@@ -1588,7 +1588,36 @@ LLM_TITLE_HINTS = {
 TERMINAL_HOST_PROCESSES = {
     "windowsterminal.exe", "powershell.exe", "pwsh.exe", "cmd.exe",
     "conhost.exe", "wt.exe", "git.exe", "bash.exe", "wsl.exe",
+    # VS Code and its forks host a real terminal too, so they go through the
+    # same AI-CLI-descendant gate as every other terminal above. See
+    # VSCODE_PROCESSES for the extra check that keeps the badge out of the
+    # code editor.
+    "code.exe", "cursor.exe", "windsurf.exe",
 }
+
+# VS Code, Cursor and Windsurf are Electron, so the integrated terminal is not
+# a TermControl the way Windows Terminal's is. Measured live 2026-11-22 with
+# tools_probe_surfaces.py, not inferred:
+#
+#   EditControl  7x17  rect=(422,-467,429,-450)
+#   name='Terminal 1, [kbd] Orchestrator  Run the command: Toggle Screen...'
+#
+# Two things follow. First, the accessible name begins "Terminal <n>," while
+# focus is in the integrated terminal and does not while focus is in the
+# editor, which is the only reliable way to tell the two apart. Without that
+# check, recognising code.exe would put a badge on screen while you are
+# writing code, which is worse than not supporting it at all.
+#
+# Second, that 7x17 rect is the CARET, not the box: successive readings came
+# back at x=1244, 1409, 1541, 1629, 1684, 1772 at a fixed height as text was
+# typed. Anchoring to it would make the badge chase the cursor, the same
+# mistake already learned and documented for dictation further down this file.
+# _vscode_terminal_pane_rect walks up to the real pane instead.
+VSCODE_PROCESSES = {"code.exe", "cursor.exe", "windsurf.exe"}
+VSCODE_TERMINAL_NAME_PREFIX = "terminal "
+# The caret is a handful of pixels wide. A real pane is orders of magnitude
+# bigger, so this tells the two apart without hardcoding either size.
+VSCODE_MIN_PANE_AREA_RATIO = 20
 AI_CLI_DESCENDANT_PROCESSES = {"claude.exe": "Claude Code"}
 
 TH32CS_SNAPPROCESS = 0x00000002
@@ -2083,6 +2112,63 @@ _title_reject_logged = [None]
 _terminal_no_match_logged = [False]
 
 
+def _vscode_focus_is_terminal():
+    """True when focus is in VS Code's integrated terminal, not the editor.
+
+    Gated on the focused control's accessible name, which begins
+    "Terminal <n>," in the terminal pane and does not in the editor. See
+    VSCODE_PROCESSES for the measurements behind this.
+
+    Deliberately fails CLOSED: anything unreadable returns False, so an
+    unexpected UIA state leaves the badge hidden rather than putting it on
+    top of somebody's code.
+    """
+    try:
+        node = auto.GetFocusedControl()
+        if node is None:
+            return False
+        name = (node.Name or "").strip().lower()
+    except Exception:
+        return False
+    return name.startswith(VSCODE_TERMINAL_NAME_PREFIX)
+
+
+def _vscode_terminal_pane_rect(control):
+    """Walk up from the caret to the terminal pane it sits in.
+
+    The focused control in VS Code's terminal is the caret itself, a few
+    pixels wide, and it moves as you type. The pane is several ancestors up,
+    and the parent DIRECTLY above the caret shares the caret's own rect, so
+    the walk has to keep going rather than stopping at the first parent.
+
+    Returns a _SimpleRect for the first ancestor whose area is at least
+    VSCODE_MIN_PANE_AREA_RATIO times the caret's, or None if the chain runs
+    out, in which case the caller keeps its existing behaviour.
+    """
+    try:
+        r = control.BoundingRectangle
+        caret_area = max(1, (r.right - r.left) * (r.bottom - r.top))
+    except Exception:
+        return None
+
+    node = control
+    for _ in range(8):
+        try:
+            node = node.GetParentControl()
+        except Exception:
+            return None
+        if node is None:
+            return None
+        try:
+            pr = node.BoundingRectangle
+        except Exception:
+            return None
+        area = (pr.right - pr.left) * (pr.bottom - pr.top)
+        if area >= caret_area * VSCODE_MIN_PANE_AREA_RATIO:
+            return _SimpleRect(pr.left, pr.top, pr.right, pr.bottom)
+    return None
+
+
 def app_label_for(process_name, hwnd):
     """Known-LLM label for whatever's in the foreground right now: by
     process name first (a real installed desktop app), then by browser tab
@@ -2091,6 +2177,12 @@ def app_label_for(process_name, hwnd):
     if label is not None:
         return label
     if process_name in TERMINAL_HOST_PROCESSES:
+        # VS Code and its forks are the one terminal host where the window
+        # also contains a code editor, so a running AI CLI is not on its own
+        # enough: focus has to actually be in the terminal pane. Checked
+        # before the process-tree walk because it is much cheaper.
+        if process_name in VSCODE_PROCESSES and not _vscode_focus_is_terminal():
+            return None
         # Process-tree check, not the title (see AI_CLI_DESCENDANT_PROCESSES
         # above for why the title never worked). Nothing content-derived is
         # logged here either way, just whether a known AI CLI process was
