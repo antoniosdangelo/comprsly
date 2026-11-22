@@ -2,7 +2,7 @@
   "name": "comprsly-website",
   "version": "1.0.0",
   "description": "Comprsly website server (comprsly.com): pages, download tracking and the private stats page",
-  "main": "index.js",
+  "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev --port 8792",
     "test": "node --test \"test/*.test.ts\"",
@@ -15,5 +15,10 @@
   "type": "module",
   "dependencies": {
     "postal-mime": "^2.7.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261106.1",
+    "@types/node": "26.6.6",
+    "typescript": "7.0.2"
   }
 }

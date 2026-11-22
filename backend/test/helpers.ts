@@ -1,3 +1,5 @@
+import type { Env } from '../src/types.ts'
+
 /**
  * Test doubles for the Worker's bindings.
  *
@@ -69,8 +71,10 @@ export type FakeEnvOptions = {
   assetHeaders?: Record<string, string>
 }
 
-export function fakeEnv(o: FakeEnvOptions = {}) {
+export function fakeEnv(o: FakeEnvOptions = {}): Env {
   const db = o.db === null ? undefined : (o.db ?? new FakeD1())
+  // One cast at the boundary: these doubles implement the slice of each
+  // binding the Worker actually calls, not the full runtime interface.
   return {
     ANALYTICS_DB: db,
     STATS_KEY: o.statsKey ?? 'test-key',
@@ -84,7 +88,7 @@ export function fakeEnv(o: FakeEnvOptions = {}) {
         })
       },
     },
-  }
+  } as unknown as Env
 }
 
 /** Collects waitUntil promises so a test can await the fire and forget writes. */
