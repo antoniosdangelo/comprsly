@@ -98,6 +98,27 @@ test('parity: only CLIs the product can detect are named', async ({ page }) => {
   }
 })
 
+test('rebuild: privacy claims match what the code actually does', async ({ page }) => {
+  test.skip(AGAINST_LIVE, 'production still carries the unaudited copy')
+  // From docs/site-claims-audit.md. Two of these were stated unconditionally
+  // and were false, which is the worst category for this product to be wrong
+  // about, since privacy is the whole pitch.
+
+  // The app DOES read keystrokes, via a WH_KEYBOARD_LL hook, whenever Windows
+  // will not expose the text box (main.py:9490, _typed_buffer_active).
+  await expect(page.getByText('not your keystrokes')).toHaveCount(0)
+
+  // There are two other network uses: the Hugging Face model download and the
+  // Store update check (local_model.py:997, main.py:1193).
+  await expect(page.getByText('only network use is downloading the app')).toHaveCount(0)
+
+  // Disk keeps HISTORY_MAX_ENTRIES = 500; the UI shows 7 days (main.py:918).
+  await expect(page.getByText('storing up to the last 7 days')).toHaveCount(0)
+
+  // The promise that is actually true, and must stay on the page.
+  await expect(page.getByText(/nothing you type leaves it/).first()).toBeVisible()
+})
+
 test('parity: no horizontal scroll', async ({ page }) => {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,

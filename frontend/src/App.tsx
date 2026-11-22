@@ -126,7 +126,7 @@ export default function App() {
               ))}
             </div>
             <p className="lede" style={{ fontSize: 14, marginTop: 18 }}>
-              Comprsly keeps a running count on your device, storing up to the last 7 days of token
+              Comprsly keeps a running count on your device, showing the last 7 days of token
               savings so you can see what the trimming is actually worth.
             </p>
           </div>
@@ -153,7 +153,7 @@ export default function App() {
           <div className="section-head reveal" style={{ marginTop: 56 }}>
             <h3 className="h3">However the text gets there.</h3>
             <p className="lede" style={{ marginTop: 10 }}>
-              Comprsly reads what is in the chat box, not your keystrokes. So pasted text and
+              Comprsly reads the text sitting in the chat box. Where Windows will not hand that text over, which is the case in most terminals, it follows what you type in that box instead so it can still help. Either way nothing is sent anywhere. So pasted text and
               dictated text are reviewed exactly the same way as typing: paste a draft from
               anywhere, or speak it with a dictation tool, and the badge still appears.
             </p>
