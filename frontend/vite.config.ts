@@ -22,9 +22,12 @@ export default defineConfig({
     // Hand the API, redirect and stats routes to `wrangler dev` so local dev
     // exercises the real Worker instead of a mock.
     proxy: {
-      '/api': 'http://localhost:8787',
-      '/go': 'http://localhost:8787',
-      '/stats': 'http://localhost:8787',
+      // 8792 is Comprsly's Worker port, matching backend's `npm run dev`.
+      // These three prefixes are every route the Worker owns, so the store
+      // redirect, the stats page and the beacon all hit the real thing.
+      '/api': 'http://localhost:8792',
+      '/go': 'http://localhost:8792',
+      '/stats': 'http://localhost:8792',
     },
   },
 })
