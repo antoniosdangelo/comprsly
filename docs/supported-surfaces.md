@@ -1,0 +1,166 @@
+# Where Comprsly works
+
+What the app actually recognises today, read out of `desktop/main.py` at
+`APP_VERSION = "1.0.67"`, not from memory or the website.
+
+Keep this file honest. It is the source for the website's claims, and the last
+time the site described a feature nobody had checked, it told people to switch
+terminals on individually in Settings when no such toggle has ever existed.
+
+---
+
+## Confirmed working
+
+Badge placement on these was tested live and signed off on 2026-08-03.
+
+| Surface | How it is recognised |
+|---|---|
+| Claude (claude.ai) | domain |
+| Claude Code, in the browser | domain |
+| Claude Code, in a terminal | terminal host process |
+| Claude artifact side panel | domain |
+| ChatGPT (chatgpt.com, chat.openai.com) | domain |
+| Gemini (gemini.google.com) | domain |
+| Gemini in the Chrome side panel | the control's accessible name |
+| Perplexity (perplexity.ai) | domain |
+| Grok (grok.com, x.ai) | domain |
+| Copilot (copilot.microsoft.com) | domain |
+| DeepSeek (chat.deepseek.com) | domain |
+
+## Recognised, not individually verified
+
+Matched by domain, so they should work, but nobody has sat down and checked
+badge placement on each one.
+
+Le Chat (chat.mistral.ai) · Poe · Hugging Face · You.com · Pi (pi.ai) ·
+Character.AI
+
+## Terminals
+
+Windows Terminal · PowerShell · pwsh · Command Prompt · Git Bash · WSL
+
+Matched on the host process, so any CLI agent running inside one of these is
+covered: Claude Code, Gemini CLI, Codex CLI, Copilot CLI.
+
+**There is no per terminal switch.** `APP_CATEGORIES = ("ai_chat",)` is the
+only toggle in Settings and it covers everything.
+
+---
+
+## Not supported yet
+
+| Surface | Why not | What it would take |
+|---|---|---|
+| **VS Code** | **Not a recognition problem.** `tools_probe_surfaces.py` confirms VS Code exposes a proper focused `EditControl`, readable right now. `app_label_for()` simply returns nothing for `code.exe`. | Recognise `code.exe`, then tell the integrated terminal and chat panes apart from the code editor. Without that split the badge would appear while you are writing code, which is worse than not supporting it. |
+| Cursor | same shape as VS Code, both are Electron and VS Code derived | same work, probably the same fix |
+| Windsurf | same | same |
+| LM Studio | never probed | run the probe while focused on its chat box |
+| Claude desktop | Electron, often exposes no accessible control | probe first; may need the guessed position path |
+| ChatGPT desktop | same | same |
+
+### VS Code: measured, and now fully specified
+
+Measured 2026-11-22 with `tools_probe_surfaces.py` and
+`tools_scan_surfaces.py`. Not inferred.
+
+**The focused control in VS Code's integrated terminal:**
+
+```
+EditControl  7x17  rect=(422,-467,429,-450)
+name='Terminal 1, [kbd] Orchestrator  Run the command: Toggle Screen Reader...'
+```
+
+Three things fall out of that:
+
+1. **VS Code is recognisable.** `app_label_for()` returns nothing for
+   `code.exe`, which is the only reason the badge never appears. The input is
+   readable the whole time.
+
+2. **The integrated terminal announces itself.** The accessible name begins
+   `Terminal <n>,` whenever focus is in the integrated terminal. That is the
+   discriminator for the hard part, telling the terminal apart from the code
+   editor, so the badge never turns up while you are writing code. It is the
+   same mechanism the product already uses for Gemini's Chrome side panel via
+   `KNOWN_SIDE_PANEL_NAME_PREFIXES`.
+
+3. **The focused rect is the caret, not the box.** 7x17 pixels, and it moves
+   horizontally as you type: successive readings came back at x=1244, 1409,
+   1541, 1629, 1684, 1772, all at the same height. Anchoring to it would make
+   the badge chase the cursor. The terminal pane is two levels up the ancestor
+   chain, a `GroupControl` at 1001x612. The parent directly above the caret
+   shares the caret's own 7x17 rect, so the walk has to continue past it.
+
+**Implementation shape:**
+
+- recognise `code.exe` in `app_label_for`
+- focused control name starts with `Terminal ` → treat as a terminal surface
+- otherwise → stay hidden, it is the editor
+- anchor to the first ancestor whose rect is substantially larger than the
+  caret, not to the focused control
+
+Cursor and Windsurf are both VS Code forks, so the same approach should carry
+over. Worth probing each to confirm the name prefix survives their rebranding.
+
+### An earlier wrong conclusion, corrected twice
+
+Worth recording, because the same mistake nearly got made twice in one hour.
+
+**First wrong conclusion:** `debug.log` said `no editable text field in
+code.exe`, which was taken to mean VS Code's input is unreadable. The focused
+probe disproved it: a real `EditControl` is there.
+
+**Second wrong conclusion:** the first version of `tools_scan_surfaces.py`
+counted `DocumentControl` as an input and duly reported VS Code as
+`ADDABLE: exposes a real input`. That control was the whole 1920x1032 window,
+which is exactly the false positive `main.py` already rejects in its
+`page_level` branch. The scanner now excludes window level controls and applies
+the same 60% of window backstop, after which VS Code correctly reports
+`HARD: no readable input exposed` on an unfocused walk.
+
+**Both wrong for the same reason:** a tree walked without focus and a tree
+walked with focus are different trees. Electron builds the accessible subtree
+lazily. The unfocused scan is useful for a quick inventory; only the focused
+probe can be trusted for a verdict on a specific app.
+
+---
+
+## The phantom badge
+
+Open bug: the badge has appeared with no chat or terminal on screen.
+
+Most likely cause, from `main.py`'s own comment on the hide logic:
+
+> Deliberately NOT keyed on raw_rect being None too: that also covers apps with
+> NO accessible control at all (Claude's Electron composer, a terminal), where
+> the fallback-guess branch below is the correct PERMANENT strategy
+
+So when the app recognises the **process** but can nothing readable, it does
+not hide. It guesses a position and shows anyway. That is deliberate, because
+Electron apps and terminals expose nothing to read, but it means a recognised
+process with no visible window can still produce a badge. The recognised list
+includes `conhost.exe`, `git.exe` and `wsl.exe`, any of which can be focused
+with no terminal on screen.
+
+Supporting evidence from a real `debug.log`: two terminal badge rects came back
+as `(0, 1362, 2256, 1432)`, the full width of the screen pinned to the bottom.
+That is not a text box, it is a guess.
+
+**Not yet confirmed.** `tools_probe_surfaces.py` flags this case as
+`GUESSED POSITION <-- phantom badge risk` on every tick, so the next sighting
+is captured rather than reconstructed.
+
+---
+
+## Running the probe
+
+```
+cd desktop
+"C:/Users/anton/AppData/Local/Python/pythoncore-3.14-64/python.exe" tools_probe_surfaces.py
+```
+
+Click into each app, type a few characters, Ctrl+C to stop. Writes
+`probe-surfaces.jsonl` next to itself.
+
+It is read only and imports `main.py` without starting it, so it is safe to run
+while Comprsly itself is running. It changes no settings, no registry and no
+window.
