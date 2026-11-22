@@ -40,7 +40,7 @@ No. Comprsly does not use any AI service account, yours or anyone else's.
 1. `git clone https://github.com/antoniosdangelo/comprsly.git`
 2. `cd comprsly`
 3. `git config core.hooksPath .githooks` (turns on the secret check and the main push guard)
-4. Copy `backend/.dev.vars.example` to `backend/.dev.vars` and fill in the values. Never commit `.dev.vars`.
+4. Copy `backend/.env.example` to `backend/.env` and fill in the values. Never commit `.env`.
 
 ## Running the website on your laptop
 1. `cd backend`
@@ -59,6 +59,6 @@ Building the installer and the Microsoft Store package is described in `docs/Bui
 - The live site is comprsly.com. The database is Cloudflare D1 `comprsly-analytics`.
 
 ## Not in this repo on purpose
-- Secrets (`.dev.vars`, `.env`).
+- Secrets (`.env`, `.env`).
 - Built installers (`desktop/installer-output`, `build`, `dist`). They are kept in `archive\Comprsly installers` on Antonio's laptop.
 - Videos in `docs/content` (too large for git). They stay in the local folder.
