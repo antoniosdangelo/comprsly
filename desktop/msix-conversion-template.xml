@@ -11,11 +11,11 @@
     </Settings>
 
     <SaveLocation
-        PackagePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\installer-output\ComprslyStore.msix"
-        TemplatePath="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\msix-conversion-template-generated.xml" />
+        PackagePath="C:\Dev\Claude Code\Projects\Comprsly\desktop\installer-output\ComprslyStore.msix"
+        TemplatePath="C:\Dev\Claude Code\Projects\Comprsly\desktop\msix-conversion-template-generated.xml" />
 
     <Installer
-        Path="C:\Users\anton\OneDrive\Desktop\Claude Code\Ventures\Comprsly\desktop\installer-output\ComprslySetup.exe"
+        Path="C:\Dev\Claude Code\Projects\Comprsly\desktop\installer-output\ComprslySetup.exe"
         Arguments="/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
         InstallLocation="C:\Users\anton\AppData\Local\Comprsly" />
 
@@ -24,7 +24,7 @@
         PackageDisplayName="Comprsly"
         PublisherName="CN=378CB613-F751-4D4F-AF9C-EF97524D7367"
         PublisherDisplayName="Comprsly"
-        Version="1.0.2.0">
+        Version="1.1.0.0">
 
         <Applications>
             <Application
