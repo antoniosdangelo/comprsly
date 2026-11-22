@@ -29,11 +29,17 @@ export type TermApp = {
   agent: string
 }
 
+// Only CLIs the product can actually detect. Verified against
+// AI_CLI_DESCENDANT_PROCESSES in desktop/main.py, not assumed.
+//
+// Gemini CLI and Codex CLI sat here for months and never worked. Codex runs
+// as `node.exe codex.js`, so there is no distinct process name to match on,
+// and Gemini was never verified. Do not put either back without a measured
+// detection and a test beside it.
 export const TERM_APPS: TermApp[] = [
   { name: 'Windows PowerShell', prompt: 'PS C:\\Work\\api> ', branch: 'PS C:\\Work\\api> git status', agent: 'Claude Code' },
-  { name: 'Windows Terminal', prompt: 'PS C:\\Work\\api> ', branch: 'PS C:\\Work\\api> git status', agent: 'Gemini CLI' },
-  { name: 'Git Bash', prompt: '~/work/api (main)$ ', branch: '~/work/api (main)$ git status', agent: 'Codex CLI' },
   { name: 'Windows Terminal', prompt: 'PS C:\\Work\\api> ', branch: 'PS C:\\Work\\api> git status', agent: 'Copilot CLI' },
+  { name: 'Git Bash', prompt: '~/work/api (main)$ ', branch: '~/work/api (main)$ git status', agent: 'Claude Code' },
 ]
 
 /** [wrong, right, category] — the three fixes the demo walks through. */

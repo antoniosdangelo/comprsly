@@ -88,6 +88,16 @@ test('parity: terminal copy does not claim per terminal settings toggles', async
   await expect(page.getByText(/Comprsly works in Windows Terminal, PowerShell/)).toBeVisible()
 })
 
+test('parity: only CLIs the product can detect are named', async ({ page }) => {
+  test.skip(AGAINST_LIVE, 'production still names CLIs the product cannot detect')
+  // Regression guard, same class as the terminal toggle claim. Gemini CLI and
+  // Codex CLI were advertised for months and never detected. Codex runs as
+  // node.exe, so there is no process name to match on.
+  for (const absent of ['Gemini CLI', 'Codex CLI']) {
+    await expect(page.getByText(absent)).toHaveCount(0)
+  }
+})
+
 test('parity: no horizontal scroll', async ({ page }) => {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
