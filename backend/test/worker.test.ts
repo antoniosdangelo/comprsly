@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import worker from '../src/index.js'
+import worker from '../src/index.ts'
 import { FakeD1, fakeCtx, fakeEnv, parseCookie, req } from './helpers.ts'
 
 /**
