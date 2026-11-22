@@ -119,6 +119,25 @@ test('rebuild: privacy claims match what the code actually does', async ({ page 
   await expect(page.getByText(/nothing you type leaves it/).first()).toBeVisible()
 })
 
+test('rebuild: the privacy policy page matches the code too', async ({ page }) => {
+  test.skip(AGAINST_LIVE, 'production still carries the unaudited privacy page')
+  // The first pass of the audit missed this page entirely because it is static
+  // HTML rather than React. It repeated the same claims in stronger words, on
+  // the page where being wrong matters most.
+  await page.goto('/privacy/', { waitUntil: 'networkidle' })
+
+  // Contradicted by SetWindowsHookExW(WH_KEYBOARD_LL) at main.py:3136 and
+  // _peek_clipboard_text at main.py:2899.
+  await expect(page.getByText('not a keylogger')).toHaveCount(0)
+  await expect(page.getByText('Keystrokes, passwords, clipboard')).toHaveCount(0)
+
+  // Hugging Face model download and the Store update check both exist.
+  await expect(page.getByText('offline forever')).toHaveCount(0)
+
+  // True of the app, not of comprsly.com, which does record visits.
+  await expect(page.getByText('no server, no analytics')).toHaveCount(0)
+})
+
 test('parity: no horizontal scroll', async ({ page }) => {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
