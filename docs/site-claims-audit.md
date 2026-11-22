@@ -102,6 +102,58 @@ the last 7 days" is not what the code does.
 
 ---
 
+## The privacy policy page
+
+`frontend/public/privacy/index.html`. **Missed by the first pass of this
+audit**, which only covered the React source. It is a static page, and it
+repeated the same claims in stronger words, on the one page where being wrong
+matters most.
+
+### ❌ FALSE: "It is not a keylogger: it does not record keystrokes … does not read your clipboard"
+
+Directly contradicted by `SetWindowsHookExW(WH_KEYBOARD_LL, ...)` at
+`main.py:3136` and `_peek_clipboard_text()` at `main.py:2899`. Both are real.
+
+### ❌ FALSE: "Never reads: Keystrokes, passwords, clipboard, files, screenshots, other apps"
+
+Keystrokes and clipboard are false, as above.
+
+**On passwords specifically, because it was asked:** there is **no password
+field check anywhere in the code**. Searched for `IsPassword`,
+`PasswordControl`, `ProtectedContent`: zero matches. What actually protects a
+password is the gating, not an explicit guard:
+
+- `_typed_buffer_active[0] = not uia_readable` (`main.py:9509`) is only reached
+  once an app is recognised, so typing in a bank or a login screen is never
+  tracked, because those apps never produce an `app_label`.
+- `_typed_buffer_active[0] = False` (`main.py:9438`) fires as soon as focus
+  leaves a recognised app.
+- A password box is itself a readable control, so `uia_readable` is true and
+  the buffer stays off even inside a recognised site.
+
+So passwords are not captured in practice. But the protection is emergent, and
+there is no explicit check, so the page should not promise one. The row now
+lists only what is genuinely never read.
+
+Also worth recording: **the hook is never uninstalled.** `UnhookWindowsHookEx`
+has zero matches, so it stays installed for the app's lifetime. Only the
+recording is gated, not the hook.
+
+### ❌ FALSE: "1 download, the app itself, then offline forever"
+
+Same two network uses as the FAQ: the Hugging Face model download and the
+Store update check.
+
+### ⚠️ "There is no account, no server, no analytics, and no telemetry"
+
+True of the app. The **website** writes page views, download clicks and session
+duration to D1 (`backend/src/analytics.ts`). The page now separates the two
+rather than leaving a reader to find the Worker source and conclude they were
+misled. The same sentence appeared in the meta, og and twitter descriptions
+and was corrected in all three.
+
+---
+
 ## Product claims, all verified true
 
 | Claim | Backed by | Verdict |
