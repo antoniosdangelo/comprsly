@@ -1618,7 +1618,26 @@ VSCODE_TERMINAL_NAME_PREFIX = "terminal "
 # The caret is a handful of pixels wide. A real pane is orders of magnitude
 # bigger, so this tells the two apart without hardcoding either size.
 VSCODE_MIN_PANE_AREA_RATIO = 20
-AI_CLI_DESCENDANT_PROCESSES = {"claude.exe": "Claude Code"}
+# Which AI CLIs count as "a chat is happening in this terminal".
+#
+# Process name only, which means a CLI has to ship a real, distinctly named
+# executable to be detectable here. Verified on this machine 2026-11-22:
+#
+#   claude.exe   real PE executable            -> detectable
+#   copilot.exe  real PE executable            -> detectable
+#   codex        npm shim, runs as node.exe    -> NOT detectable
+#
+# Codex CLI is deliberately absent. Its launcher is a .cmd that execs
+# `node.exe codex.js`, so the only process name in the tree is node.exe, and
+# matching that would activate the badge under ANY node process. Supporting it
+# needs command line inspection, not a name. Gemini CLI is unverified: it was
+# not installed here, and being npm distributed it is likely the same shape.
+#
+# The website claimed all four for months. Three of them were never detected.
+AI_CLI_DESCENDANT_PROCESSES = {
+    "claude.exe": "Claude Code",
+    "copilot.exe": "Copilot CLI",
+}
 
 TH32CS_SNAPPROCESS = 0x00000002
 
