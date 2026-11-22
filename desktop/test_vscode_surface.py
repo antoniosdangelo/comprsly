@@ -131,5 +131,33 @@ class Registration(unittest.TestCase):
             self.assertNotIn(process, app.VSCODE_PROCESSES)
 
 
+class AiCliDetection(unittest.TestCase):
+    """Which CLIs the terminal path will actually recognise.
+
+    Verified on a real machine 2026-11-22 rather than taken from the website,
+    which had claimed four CLIs for months while only one was detected.
+    """
+
+    def test_claude_code_is_detected(self):
+        self.assertEqual(app.AI_CLI_DESCENDANT_PROCESSES.get("claude.exe"), "Claude Code")
+
+    def test_copilot_cli_is_detected(self):
+        # GitHubCopilotCLI ships a real copilot.exe, so a process name match is
+        # safe and specific.
+        self.assertEqual(app.AI_CLI_DESCENDANT_PROCESSES.get("copilot.exe"), "Copilot CLI")
+
+    def test_node_is_never_matched(self):
+        # The guard that matters. Codex CLI runs as `node.exe codex.js`, so
+        # adding node.exe would light the badge under ANY node process:
+        # a dev server, a build, this project's own test runner.
+        self.assertNotIn("node.exe", app.AI_CLI_DESCENDANT_PROCESSES)
+
+    def test_unverified_clis_are_not_claimed(self):
+        # Gemini CLI was not installed and could not be measured. Nothing goes
+        # in here on the strength of a guess.
+        for never in ("gemini.exe", "codex.exe", "gemini-cli.exe"):
+            self.assertNotIn(never, app.AI_CLI_DESCENDANT_PROCESSES)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
