@@ -98,6 +98,46 @@ test('parity: only CLIs the product can detect are named', async ({ page }) => {
   }
 })
 
+test('rebuild: privacy claims match what the code actually does', async ({ page }) => {
+  test.skip(AGAINST_LIVE, 'production still carries the unaudited copy')
+  // From docs/site-claims-audit.md. Two of these were stated unconditionally
+  // and were false, which is the worst category for this product to be wrong
+  // about, since privacy is the whole pitch.
+
+  // The app DOES read keystrokes, via a WH_KEYBOARD_LL hook, whenever Windows
+  // will not expose the text box (main.py:9490, _typed_buffer_active).
+  await expect(page.getByText('not your keystrokes')).toHaveCount(0)
+
+  // There are two other network uses: the Hugging Face model download and the
+  // Store update check (local_model.py:997, main.py:1193).
+  await expect(page.getByText('only network use is downloading the app')).toHaveCount(0)
+
+  // Disk keeps HISTORY_MAX_ENTRIES = 500; the UI shows 7 days (main.py:918).
+  await expect(page.getByText('storing up to the last 7 days')).toHaveCount(0)
+
+  // The promise that is actually true, and must stay on the page.
+  await expect(page.getByText(/nothing you type leaves it/).first()).toBeVisible()
+})
+
+test('rebuild: the privacy policy page matches the code too', async ({ page }) => {
+  test.skip(AGAINST_LIVE, 'production still carries the unaudited privacy page')
+  // The first pass of the audit missed this page entirely because it is static
+  // HTML rather than React. It repeated the same claims in stronger words, on
+  // the page where being wrong matters most.
+  await page.goto('/privacy/', { waitUntil: 'networkidle' })
+
+  // Contradicted by SetWindowsHookExW(WH_KEYBOARD_LL) at main.py:3136 and
+  // _peek_clipboard_text at main.py:2899.
+  await expect(page.getByText('not a keylogger')).toHaveCount(0)
+  await expect(page.getByText('Keystrokes, passwords, clipboard')).toHaveCount(0)
+
+  // Hugging Face model download and the Store update check both exist.
+  await expect(page.getByText('offline forever')).toHaveCount(0)
+
+  // True of the app, not of comprsly.com, which does record visits.
+  await expect(page.getByText('no server, no analytics')).toHaveCount(0)
+})
+
 test('parity: no horizontal scroll', async ({ page }) => {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
