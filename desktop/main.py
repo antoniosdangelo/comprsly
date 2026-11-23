@@ -1714,6 +1714,32 @@ def _process_tree_snapshot():
 PROCESS_QUERY_INFORMATION = 0x0400
 PROCESS_VM_READ = 0x0010
 
+# Prototypes matter here. ctypes defaults a return type to c_int, which is 32
+# bits, so a 64-bit HANDLE would be silently truncated and every later call on
+# it would fail or, worse, act on a different object. Same reason the file
+# already pins GetKeyState's restype further down.
+_k32 = ctypes.windll.kernel32
+_ntdll = ctypes.windll.ntdll
+_k32.OpenProcess.restype = wintypes.HANDLE
+_k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+_k32.CloseHandle.restype = wintypes.BOOL
+_k32.CloseHandle.argtypes = [wintypes.HANDLE]
+_k32.ReadProcessMemory.restype = wintypes.BOOL
+_k32.ReadProcessMemory.argtypes = [
+    wintypes.HANDLE, ctypes.c_void_p, ctypes.c_void_p,
+    ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t),
+]
+_k32.GetProcessTimes.restype = wintypes.BOOL
+_k32.GetProcessTimes.argtypes = [
+    wintypes.HANDLE, ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME),
+    ctypes.POINTER(wintypes.FILETIME), ctypes.POINTER(wintypes.FILETIME),
+]
+_ntdll.NtQueryInformationProcess.restype = ctypes.c_long
+_ntdll.NtQueryInformationProcess.argtypes = [
+    wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong,
+    ctypes.POINTER(ctypes.c_ulong),
+]
+
 
 class _UNICODE_STRING(ctypes.Structure):
     _fields_ = [("Length", ctypes.c_ushort),
@@ -1735,8 +1761,36 @@ class _PROCESS_BASIC_INFORMATION(ctypes.Structure):
 _PEB_PROCESS_PARAMETERS_OFFSET = 0x20
 _PARAMS_COMMANDLINE_OFFSET = 0x70
 
+# Keyed by (pid, creation time), NEVER by pid alone.
+#
+# Windows recycles PIDs aggressively. A Gemini node.exe cached as "Gemini CLI"
+# can exit and a dev server's node.exe can be handed the same pid minutes
+# later, at which point a pid-only cache would answer "Gemini CLI" for it and
+# put a badge over an unrelated terminal. That is a false POSITIVE, so it
+# breaks the fail-closed guarantee rather than merely being stale.
+#
+# A process's creation time is unique for the life of that process, so the
+# pair identifies one specific process instance and a recycled pid simply
+# misses the cache and is read fresh.
 _cmdline_cache = {}
 _CMDLINE_CACHE_MAX = 64
+
+
+def _process_creation_time(handle):
+    """The process's creation time as an int, or None if unreadable.
+
+    Used only to make the cache key identify a process INSTANCE rather than a
+    pid. None means no caching for that process, which is correct: better to
+    re-read than to risk answering for a recycled pid.
+    """
+    created = wintypes.FILETIME()
+    exited = wintypes.FILETIME()
+    kernel = wintypes.FILETIME()
+    user = wintypes.FILETIME()
+    if not _k32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(exited),
+                                ctypes.byref(kernel), ctypes.byref(user)):
+        return None
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
 
 
 def _process_command_line(pid):
@@ -1754,18 +1808,23 @@ def _process_command_line(pid):
     Only called for the handful of names in CMDLINE_CHECK_PROCESSES, and only
     for processes already found inside a terminal's own descendant tree.
     """
-    cached = _cmdline_cache.get(pid)
-    if cached is not None:
-        return cached[1]
-
-    handle = ctypes.windll.kernel32.OpenProcess(
+    handle = _k32.OpenProcess(
         PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
     if not handle:
         return None
     try:
+        # Identify the process INSTANCE before trusting any cached answer, so
+        # a recycled pid can never inherit the previous process's command
+        # line. See the _cmdline_cache comment.
+        created = _process_creation_time(handle)
+        key = (pid, created) if created is not None else None
+        if key is not None:
+            cached = _cmdline_cache.get(key)
+            if cached is not None:
+                return cached
         pbi = _PROCESS_BASIC_INFORMATION()
         written = ctypes.c_ulong()
-        status = ctypes.windll.ntdll.NtQueryInformationProcess(
+        status = _ntdll.NtQueryInformationProcess(
             handle, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), ctypes.byref(written))
         if status != 0 or not pbi.PebBaseAddress:
             return None
@@ -1773,7 +1832,7 @@ def _process_command_line(pid):
         def _read(address, size):
             buf = (ctypes.c_char * size)()
             got = ctypes.c_size_t()
-            ok = ctypes.windll.kernel32.ReadProcessMemory(
+            ok = _k32.ReadProcessMemory(
                 handle, ctypes.c_void_p(address), buf, size, ctypes.byref(got))
             if not ok or got.value != size:
                 return None
@@ -1803,11 +1862,12 @@ def _process_command_line(pid):
     except Exception:
         return None
     finally:
-        ctypes.windll.kernel32.CloseHandle(handle)
+        _k32.CloseHandle(handle)
 
-    if len(_cmdline_cache) >= _CMDLINE_CACHE_MAX:
-        _cmdline_cache.clear()
-    _cmdline_cache[pid] = (time.time(), value)
+    if key is not None:
+        if len(_cmdline_cache) >= _CMDLINE_CACHE_MAX:
+            _cmdline_cache.clear()
+        _cmdline_cache[key] = value
     return value
 
 
