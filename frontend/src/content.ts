@@ -39,7 +39,8 @@ export type TermApp = {
 export const TERM_APPS: TermApp[] = [
   { name: 'Windows PowerShell', prompt: 'PS C:\\Work\\api> ', branch: 'PS C:\\Work\\api> git status', agent: 'Claude Code' },
   { name: 'Windows Terminal', prompt: 'PS C:\\Work\\api> ', branch: 'PS C:\\Work\\api> git status', agent: 'Copilot CLI' },
-  { name: 'Git Bash', prompt: '~/work/api (main)$ ', branch: '~/work/api (main)$ git status', agent: 'Claude Code' },
+  { name: 'Git Bash', prompt: '~/work/api (main)$ ', branch: '~/work/api (main)$ git status', agent: 'Codex CLI' },
+  { name: 'Windows Terminal', prompt: 'PS C:\\Work\\api> ', branch: 'PS C:\\Work\\api> git status', agent: 'Gemini CLI' },
 ]
 
 /** [wrong, right, category] — the three fixes the demo walks through. */
