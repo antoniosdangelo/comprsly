@@ -42,6 +42,22 @@ Windows Terminal · PowerShell · pwsh · Command Prompt · Git Bash · WSL
 Matched on the host process, so any CLI agent running inside one of these is
 covered: Claude Code, Gemini CLI, Codex CLI, Copilot CLI.
 
+**AI CLIs detected inside a terminal**, measured 2026-11-23 with
+`tools_measure_cli_trees.py`:
+
+| CLI | How it is found | Why |
+|---|---|---|
+| Claude Code | `claude.exe` by name | ships a real binary |
+| Copilot CLI | `copilot.exe` by name | ships a real binary |
+| Codex CLI | `codex.exe` by name | spawns a native vendored binary beside its node shim |
+| Gemini CLI | `@google/gemini-cli` in a `node.exe` command line | ships no binary at all; its whole tree is node, conhost, cmd and powershell |
+
+Bare `node.exe` is never matched, and a test enforces that. Matching it would
+light the badge under any node process: a dev server, a build, this repo's own
+test runner. Command lines are read straight from the PEB rather than via
+psutil or WMI, so this adds no dependency and no per tick cost, and it fails
+closed: an unreadable command line means no match.
+
 **There is no per terminal switch.** `APP_CATEGORIES = ("ai_chat",)` is the
 only toggle in Settings and it covers everything.
 
