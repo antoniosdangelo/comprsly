@@ -88,14 +88,24 @@ test('parity: terminal copy does not claim per terminal settings toggles', async
   await expect(page.getByText(/Comprsly works in Windows Terminal, PowerShell/)).toBeVisible()
 })
 
-test('parity: only CLIs the product can detect are named', async ({ page }) => {
-  test.skip(AGAINST_LIVE, 'production still names CLIs the product cannot detect')
-  // Regression guard, same class as the terminal toggle claim. Gemini CLI and
-  // Codex CLI were advertised for months and never detected. Codex runs as
-  // node.exe, so there is no process name to match on.
-  for (const absent of ['Gemini CLI', 'Codex CLI']) {
-    await expect(page.getByText(absent)).toHaveCount(0)
-  }
+test('parity: the terminal demo only names CLIs the product detects', async ({ page }) => {
+  test.skip(AGAINST_LIVE, 'production predates the Codex and Gemini detection')
+  // This guard started life asserting Gemini and Codex were ABSENT, because
+  // they were advertised for months and never detected. Both were measured
+  // and wired up on 2026-11-23, so it now checks the real invariant instead:
+  // whatever the demo names has to be something detection actually covers.
+  //
+  //   Claude Code   claude.exe    by name
+  //   Copilot CLI   copilot.exe   by name
+  //   Codex CLI     codex.exe     by name, native vendored binary
+  //   Gemini CLI    node.exe      by @google/gemini-cli in its command line
+  //
+  // The demo rotates one agent at a time, so this reads whichever is showing
+  // rather than expecting all four in the DOM at once.
+  const SUPPORTED = ['Claude Code', 'Copilot CLI', 'Codex CLI', 'Gemini CLI']
+  await page.getByRole('tab', { name: 'Terminal' }).click()
+  const shown = await page.locator('.term-foot .agent').first().textContent()
+  expect(SUPPORTED, `demo named ${shown}, which nothing detects`).toContain((shown ?? '').trim())
 })
 
 test('rebuild: privacy claims match what the code actually does', async ({ page }) => {
