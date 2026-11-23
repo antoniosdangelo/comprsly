@@ -146,16 +146,57 @@ class AiCliDetection(unittest.TestCase):
         # safe and specific.
         self.assertEqual(app.AI_CLI_DESCENDANT_PROCESSES.get("copilot.exe"), "Copilot CLI")
 
+    def test_codex_is_detected_by_name(self):
+        # Measured 2026-11-23: Codex spawns a native vendored codex.exe
+        # alongside its node shim, so no command line read is needed.
+        self.assertEqual(app.AI_CLI_DESCENDANT_PROCESSES.get("codex.exe"), "Codex CLI")
+
+    def test_gemini_is_detected_by_cmdline(self):
+        # Measured 2026-11-23: Gemini's whole tree is node, conhost, cmd and
+        # powershell, with no distinctly named binary, so the package entry
+        # path in the command line is the only thing that identifies it.
+        labels = {label for _markers, label in app.AI_CLI_CMDLINE_MARKERS}
+        self.assertIn("Gemini CLI", labels)
+
+    def test_cmdline_markers_are_package_paths_not_bare_words(self):
+        # A marker like "gemini" would match any file or folder with that in
+        # its path. Every marker must be scoped to a package.
+        for markers, label in app.AI_CLI_CMDLINE_MARKERS:
+            for marker in markers:
+                self.assertTrue(marker.startswith("@"), f"{label}: {marker!r} is not a package path")
+                self.assertGreater(len(marker), 8, f"{label}: {marker!r} is too loose")
+
+    def test_only_node_ever_triggers_a_cmdline_read(self):
+        # Keeps the expensive path rare and the blast radius small.
+        self.assertEqual(app.CMDLINE_CHECK_PROCESSES, {"node.exe"})
+
+    def test_unreadable_cmdline_fails_closed(self):
+        # pid 0 is the System Idle Process: OpenProcess always refuses it, so
+        # it is a real unreadable case rather than a mocked one.
+        self.assertIsNone(app._process_command_line(0))
+        self.assertIsNone(app._ai_cli_label_from_cmdline(0))
+
+    def test_a_plain_node_cmdline_matches_nothing(self):
+        # The exact shapes that must never trigger: a dev server, a build, a
+        # test runner. Checked against the real matcher logic.
+        import os as _os
+        own = app._process_command_line(_os.getpid())
+        self.assertIsNotNone(own, "should be able to read our own command line")
+        self.assertIsNone(app._ai_cli_label_from_cmdline(_os.getpid()))
+
     def test_node_is_never_matched(self):
         # The guard that matters. Codex CLI runs as `node.exe codex.js`, so
         # adding node.exe would light the badge under ANY node process:
         # a dev server, a build, this project's own test runner.
         self.assertNotIn("node.exe", app.AI_CLI_DESCENDANT_PROCESSES)
 
-    def test_unverified_clis_are_not_claimed(self):
-        # Gemini CLI was not installed and could not be measured. Nothing goes
-        # in here on the strength of a guess.
-        for never in ("gemini.exe", "codex.exe", "gemini-cli.exe"):
+    def test_no_invented_executables_are_claimed(self):
+        # Updated 2026-11-23. codex.exe was on this list while Codex was
+        # unverified; it has since been measured and is real, so it moved into
+        # the map. These never existed and must not be invented: Gemini ships
+        # no binary of its own, which is exactly why it needs a command line
+        # match rather than a name.
+        for never in ("gemini.exe", "gemini-cli.exe", "openai.exe", "google.exe"):
             self.assertNotIn(never, app.AI_CLI_DESCENDANT_PROCESSES)
 
 
