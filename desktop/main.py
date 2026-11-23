@@ -1637,7 +1637,35 @@ VSCODE_MIN_PANE_AREA_RATIO = 20
 AI_CLI_DESCENDANT_PROCESSES = {
     "claude.exe": "Claude Code",
     "copilot.exe": "Copilot CLI",
+    # Measured 2026-11-23 with tools_measure_cli_trees.py: Codex spawns a real
+    # native binary alongside its node shim, vendored at
+    # @openai/codex-win32-x64/vendor/.../bin/codex.exe, so a plain name match
+    # works and no command line reading is needed for it.
+    "codex.exe": "Codex CLI",
 }
+
+# CLIs that run as node and nothing else, so a process NAME can never identify
+# them. Measured 2026-11-23: Gemini's whole tree is node.exe, node.exe,
+# conhost, cmd and powershell, with no distinctly named binary anywhere.
+#
+# Matching bare node.exe is not an option: it would light the badge under any
+# node process at all, a dev server, a build, this repo's own test runner. So
+# these are matched on the PACKAGE ENTRY PATH inside the command line, which a
+# dev server never has. Both separators are listed because the command line
+# carries whichever the launcher used.
+#
+# Kept deliberately narrow. A marker here must be a package path, never a bare
+# word like "gemini" that a filename or a cwd could contain by accident.
+AI_CLI_CMDLINE_MARKERS = (
+    (("@google/gemini-cli", r"@google\gemini-cli"), "Gemini CLI"),
+    # Codex is already caught by codex.exe above. This is a fallback for a
+    # future build that drops the native binary, and costs nothing.
+    (("@openai/codex", r"@openai\codex"), "Codex CLI"),
+)
+
+# Only these process names are ever worth reading a command line for. Anything
+# else is matched by name or not at all, so the expensive path stays rare.
+CMDLINE_CHECK_PROCESSES = {"node.exe"}
 
 TH32CS_SNAPPROCESS = 0x00000002
 
@@ -1680,6 +1708,122 @@ def _process_tree_snapshot():
     return snapshot
 
 
+# Needed to read another process's PEB. VM_READ is the one that matters and
+# is only granted for processes the current user owns, which is exactly the
+# scope wanted: a CLI the user launched in their own terminal.
+PROCESS_QUERY_INFORMATION = 0x0400
+PROCESS_VM_READ = 0x0010
+
+
+class _UNICODE_STRING(ctypes.Structure):
+    _fields_ = [("Length", ctypes.c_ushort),
+                ("MaximumLength", ctypes.c_ushort),
+                ("Buffer", ctypes.c_void_p)]
+
+
+class _PROCESS_BASIC_INFORMATION(ctypes.Structure):
+    _fields_ = [("Reserved1", ctypes.c_void_p),
+                ("PebBaseAddress", ctypes.c_void_p),
+                ("Reserved2", ctypes.c_void_p * 2),
+                ("UniqueProcessId", ctypes.c_void_p),
+                ("Reserved3", ctypes.c_void_p)]
+
+
+# Offsets into the 64-bit PEB and RTL_USER_PROCESS_PARAMETERS. Stable across
+# every supported Windows version; the app is x64 only (the Store package is
+# x64, min 10.0.17763.0), so there is no WOW64 case to handle.
+_PEB_PROCESS_PARAMETERS_OFFSET = 0x20
+_PARAMS_COMMANDLINE_OFFSET = 0x70
+
+_cmdline_cache = {}
+_CMDLINE_CACHE_MAX = 64
+
+
+def _process_command_line(pid):
+    """A process's command line, or None if it cannot be read.
+
+    Reads the PEB directly rather than taking a psutil or WMI dependency: the
+    app ships with a fixed, audited requirements list and this is the only
+    place that needs a command line. A WMI query would also cost about a
+    second, which is unusable on a 0.7s loop.
+
+    FAILS CLOSED in every failure mode. A process that has exited, one owned
+    by another user, an elevated one, a partial read: all return None, and a
+    None means the caller does not match, so the badge stays hidden.
+
+    Only called for the handful of names in CMDLINE_CHECK_PROCESSES, and only
+    for processes already found inside a terminal's own descendant tree.
+    """
+    cached = _cmdline_cache.get(pid)
+    if cached is not None:
+        return cached[1]
+
+    handle = ctypes.windll.kernel32.OpenProcess(
+        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    if not handle:
+        return None
+    try:
+        pbi = _PROCESS_BASIC_INFORMATION()
+        written = ctypes.c_ulong()
+        status = ctypes.windll.ntdll.NtQueryInformationProcess(
+            handle, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), ctypes.byref(written))
+        if status != 0 or not pbi.PebBaseAddress:
+            return None
+
+        def _read(address, size):
+            buf = (ctypes.c_char * size)()
+            got = ctypes.c_size_t()
+            ok = ctypes.windll.kernel32.ReadProcessMemory(
+                handle, ctypes.c_void_p(address), buf, size, ctypes.byref(got))
+            if not ok or got.value != size:
+                return None
+            return bytes(buf)
+
+        peb = ctypes.cast(pbi.PebBaseAddress, ctypes.c_void_p).value
+        raw_ptr = _read(peb + _PEB_PROCESS_PARAMETERS_OFFSET, 8)
+        if not raw_ptr:
+            return None
+        params = int.from_bytes(raw_ptr, "little")
+
+        raw_us = _read(params + _PARAMS_COMMANDLINE_OFFSET,
+                       ctypes.sizeof(_UNICODE_STRING))
+        if not raw_us:
+            return None
+        length = int.from_bytes(raw_us[0:2], "little")
+        buffer_ptr = int.from_bytes(raw_us[8:16], "little")
+        # A command line longer than 32KB is not a real one; refuse rather
+        # than allocate on a number read out of another process's memory.
+        if not length or not buffer_ptr or length > 32768:
+            return None
+
+        raw = _read(buffer_ptr, length)
+        if not raw:
+            return None
+        value = raw.decode("utf-16-le", "replace")
+    except Exception:
+        return None
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+    if len(_cmdline_cache) >= _CMDLINE_CACHE_MAX:
+        _cmdline_cache.clear()
+    _cmdline_cache[pid] = (time.time(), value)
+    return value
+
+
+def _ai_cli_label_from_cmdline(pid):
+    """Match a node process against the known package entry paths."""
+    cmdline = _process_command_line(pid)
+    if not cmdline:
+        return None
+    lowered = cmdline.lower()
+    for markers, label in AI_CLI_CMDLINE_MARKERS:
+        for marker in markers:
+            if marker.lower() in lowered:
+                return label
+    return None
+
+
 def _find_ai_cli_descendant(root_pid):
     """Breadth-first search down the process tree from root_pid (the
     foreground terminal's own PID) for any process matching
@@ -1698,6 +1842,14 @@ def _find_ai_cli_descendant(root_pid):
         label = AI_CLI_DESCENDANT_PROCESSES.get(name)
         if label is not None:
             return label
+        # Name told us nothing. For the few names that can only ever be
+        # identified by what they are RUNNING (node), fall back to the command
+        # line. Everything else is left alone, so the expensive read stays
+        # rare and bare node.exe is never matched on its own.
+        if name in CMDLINE_CHECK_PROCESSES:
+            label = _ai_cli_label_from_cmdline(pid)
+            if label is not None:
+                return label
         for child in children_by_parent.get(pid, []):
             if child not in seen:
                 seen.add(child)
