@@ -184,6 +184,43 @@ class AiCliDetection(unittest.TestCase):
         self.assertIsNotNone(own, "should be able to read our own command line")
         self.assertIsNone(app._ai_cli_label_from_cmdline(_os.getpid()))
 
+    def test_cmdline_cache_is_keyed_by_process_instance_not_pid(self):
+        """The guard against PID reuse handing one process another's answer.
+
+        Windows recycles PIDs. A Gemini node.exe cached under pid 4242 can
+        exit and a dev server's node.exe can be given 4242 minutes later. A
+        pid-only cache would answer "Gemini CLI" for the dev server, which is
+        a false POSITIVE and so breaks fail closed, not merely staleness.
+        """
+        import os as _os
+        app._cmdline_cache.clear()
+        own = app._process_command_line(_os.getpid())
+        self.assertIsNotNone(own)
+
+        keys = list(app._cmdline_cache)
+        self.assertEqual(len(keys), 1)
+        key = keys[0]
+        self.assertIsInstance(key, tuple, "cache key must be a tuple, not a bare pid")
+        self.assertEqual(len(key), 2, "cache key must be (pid, creation time)")
+        self.assertEqual(key[0], _os.getpid())
+        self.assertIsInstance(key[1], int)
+        self.assertGreater(key[1], 0, "creation time must be a real value")
+
+    def test_a_recycled_pid_does_not_inherit_a_cached_cmdline(self):
+        # Simulate the reuse directly: poison the cache with this pid under a
+        # DIFFERENT creation time, as a dead process would have left it. The
+        # live process must not pick that answer up.
+        import os as _os
+        pid = _os.getpid()
+        app._cmdline_cache.clear()
+        app._cmdline_cache[(pid, 1)] = "node.exe C:/some/dead/@google/gemini-cli/x.js"
+
+        self.assertIsNone(
+            app._ai_cli_label_from_cmdline(pid),
+            "a stale entry under a recycled pid was trusted; fail closed is broken",
+        )
+        app._cmdline_cache.clear()
+
     def test_node_is_never_matched(self):
         # The guard that matters. Codex CLI runs as `node.exe codex.js`, so
         # adding node.exe would light the badge under ANY node process:
