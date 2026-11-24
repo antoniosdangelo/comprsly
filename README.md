@@ -4,6 +4,8 @@ Comprsly fixes your spelling and grammar as you type in AI chats, then optionall
 
 Website: [comprsly.com](https://comprsly.com) · Microsoft Store: [Get Comprsly](https://apps.microsoft.com/detail/9N8W5HPJ4DHV)
 
+**Versions.** The Microsoft Store has 1.0.3.0. This repo's `main` is 1.1.0, which adds Codex CLI, Gemini CLI and Copilot CLI detection, and goes to the Store next. Until then, those three CLIs work only in a build from source.
+
 ## 1. What you need
 
 **Windows 10 or Windows 11.** There is no Mac or Linux version yet, because Comprsly reads Windows text fields directly.
