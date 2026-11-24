@@ -46,7 +46,7 @@ jobs:
         run: choco install innosetup -y --no-progress
 
       - name: Build installer (Inno Setup)
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DNoModel installer.iss'
         shell: pwsh
 
       # --- Code signing goes here once the Azure Trusted Signing resource
