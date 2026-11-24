@@ -38,7 +38,9 @@
 ; logic (RunModelDownload, kept for parity/safety net) skips itself
 ; automatically. See local_model.download_model for the runtime download path
 ; this replaces as the primary route.
+#ifndef ModelSourceDir
 #define ModelSourceDir "C:\Users\anton\AppData\Local\Comprsly\model\qwen2.5-1.5b-instruct-int4-cpu"
+#endif
 
 [Setup]
 AppId={{B4E1F1A0-6C6D-4A1E-9F2A-TOKEN0SAVER1}
@@ -163,7 +165,11 @@ Source: "ACKNOWLEDGEMENTS.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; where ModelAlreadyPresent() (in [Code] below) checks for it, so the
 ; existing skip-the-download logic engages automatically -- no Pascal
 ; changes needed.
+; CI has no copy of the model, so the build workflow passes /DNoModel and the
+; installer falls back to the first-run download. Local Store builds bundle it.
+#ifndef NoModel
 Source: "{#ModelSourceDir}\*"; DestDir: "{app}\model\qwen2.5-1.5b-instruct-int4-cpu"; Flags: ignoreversion recursesubdirs
+#endif
 
 [InstallDelete]
 ; Clear out the pre-rename binary and its Startup shortcut so an upgrade
