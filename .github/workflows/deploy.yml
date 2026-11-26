@@ -34,9 +34,9 @@ jobs:
       - name: Install and test
         if: env.READY == 'true'
         run: |
-          npm ci --prefix frontend && npm test --prefix frontend
-          npm ci --prefix backend && npm test --prefix backend
+          npm ci --prefix website/frontend && npm test --prefix website/frontend
+          npm ci --prefix website/backend && npm test --prefix website/backend
       - name: Deploy
         if: env.READY == 'true'
-        working-directory: backend
+        working-directory: website/backend
         run: npm run deploy

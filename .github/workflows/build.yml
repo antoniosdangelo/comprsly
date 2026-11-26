@@ -23,7 +23,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: desktop
+        working-directory: product/build
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -70,6 +70,6 @@ jobs:
         with:
           name: comprsly-build-${{ github.sha }}
           path: |
-            desktop/dist/
-            desktop/installer-output/ComprslySetup.exe
+            product/build/dist/
+            product/build/installer-output/ComprslySetup.exe
           retention-days: 14

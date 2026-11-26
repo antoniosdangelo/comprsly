@@ -17,8 +17,8 @@ Older commits keep their original messages; this file explains them so nothing h
 
 ## November 21, 2026: reorganized into one repo (branch `sandbox`)
 - **4d6a971** Saved the desktop work that was sitting on the laptop uncommitted since July 27: installer, Store package template, main app, suggestion engine, web screens, version info and the Microsoft Store logos. Added the secret check and the main branch push guard.
-- **5e5f10f** Moved the desktop app into `desktop/`. File locations only, no code changes.
-- **daeffeb** Added the website (`frontend/` pages, `backend/` server), the browser extension, the terminal helper, docs and tools, plus the README, branch rules, ignore rules and the settings list (names only).
+- **5e5f10f** Moved the desktop app into `product/`. File locations only, no code changes.
+- **daeffeb** Added the website (`website/frontend/` pages, `website/backend/` server), the browser extension, the terminal helper, docs and tools, plus the README, branch rules, ignore rules and the settings list (names only).
 - **8290b1f** The repo moved from the Comprsly organization to Antonio's account, so links in the docs now point at `antoniosdangelo/comprsly`.
 - Naming and descriptions: README description matches the GitHub description, website package renamed `comprsly-website`, and this change log added.
 - README now explains what Comprsly does, how to install it from the Microsoft Store, and that it needs no API key (everything runs on the user's PC).
