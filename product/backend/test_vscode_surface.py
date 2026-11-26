@@ -245,27 +245,76 @@ class TerminalBadgeInLine(unittest.TestCase):
         wrap = FakeControl("", caret, parent=pane)
         return FakeControl("Terminal 1, input", caret, parent=wrap)
 
-    def test_spans_the_pane_on_the_caret_line(self):
+    def test_spans_the_pane_so_the_badge_docks_at_its_right_edge(self):
         caret = (400, 960, 411, 978)
-        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
         self.assertEqual((r.left, r.right), (100, 1900))
-        self.assertEqual((r.top, r.bottom), (960, 978))
+        self.assertEqual(r.bottom - r.top, 18)
 
-    def test_badge_lands_right_of_the_caret_not_on_the_text(self):
+    def test_sits_on_the_panes_last_row_below_every_line(self):
+        """Below the input, not beside it. The pane here is 100..1900 by
+        0..1080, so the badge sits on 1062..1080 whatever the caret does."""
         caret = (400, 960, 411, 978)
-        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
-        badge_left = r.right - app.BADGE_ICON_SIZE - app.BADGE_INSIDE_INSET
-        self.assertGreater(badge_left, caret[2])
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
+        self.assertEqual((r.top, r.bottom), (982, 1000))
 
-    def test_drops_one_line_when_the_caret_reaches_the_badge(self):
-        caret = (1880, 960, 1891, 978)
-        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
-        self.assertEqual((r.top, r.bottom), (978, 996))
+    def test_it_does_not_move_when_the_caret_does(self):
+        """The whole complaint, as a test. Four very different caret positions,
+        including different lines and different columns, must all produce the
+        same badge rect."""
+        rects = set()
+        for caret in [(400, 960, 411, 978), (1800, 300, 1811, 318),
+                      (120, 1040, 131, 1058), (950, 500, 961, 518)]:
+            r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0,
+                                         app._SimpleRect(*caret), "Claude Code")
+            rects.add((r.left, r.top, r.right, r.bottom))
+        self.assertEqual(len(rects), 1, "the badge moved with the caret: %r" % (rects,))
+
+    def test_it_never_renders_outside_the_pane(self):
+        caret = (400, 960, 411, 978)
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
+        self.assertLessEqual(r.bottom, 1000)
+        self.assertGreaterEqual(r.top, 200)
+
+    def test_carries_the_line_height_so_the_badge_can_fit_the_row(self):
+        caret = (400, 960, 411, 978)
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
+        self.assertEqual(r.line_h, 18)
+
+    def test_badge_is_drawn_no_taller_than_the_row(self):
+        """The whole point: a 38 px badge on a 17 px row covers the lines
+        around it. Guards the size, not just the position."""
+        badge = app.PersistentBadge.__new__(app.PersistentBadge)
+        badge.MIN_SIZE = app.PersistentBadge.MIN_SIZE
+        row = app._SimpleRect(100, 978, 1900, 996)
+        row.line_h = 18
+        self.assertLessEqual(badge._size_for_rect(row), 18)
+
+    def test_a_normal_box_keeps_the_full_size_badge(self):
+        """Browser chats have no line_h and must be untouched by any of this."""
+        badge = app.PersistentBadge.__new__(app.PersistentBadge)
+        badge.MIN_SIZE = app.PersistentBadge.MIN_SIZE
+        self.assertEqual(badge._size_for_rect(app._SimpleRect(100, 500, 900, 560)),
+                         app.BADGE_ICON_SIZE)
+
+    def test_never_shrinks_below_the_clickable_floor(self):
+        badge = app.PersistentBadge.__new__(app.PersistentBadge)
+        badge.MIN_SIZE = app.PersistentBadge.MIN_SIZE
+        tiny = app._SimpleRect(100, 978, 1900, 982)
+        tiny.line_h = 4
+        self.assertEqual(badge._size_for_rect(tiny), app.PersistentBadge.MIN_SIZE)
+
+    def test_all_four_clis_dock_at_the_same_inset(self):
+        """He asked for the badge to be the same on all of them. It was not:
+        Claude Code carried a 64 px override the others never had."""
+        insets = {app._badge_inset_for(c) for c in
+                  ("Claude Code", "Codex CLI", "Gemini CLI", "Copilot CLI")}
+        self.assertEqual(len(insets), 1)
 
     def test_no_pane_found_keeps_the_old_fallback(self):
         caret = (400, 960, 411, 978)
         lone = FakeControl("Terminal 1, input", caret, parent=None)
-        self.assertIsNone(app._terminal_badge_rect(lone, "code.exe", 0, app._SimpleRect(*caret)))
+        self.assertIsNone(app._terminal_badge_rect(lone, "code.exe", 0, app._SimpleRect(*caret), "Claude Code"))
 
 
 if __name__ == "__main__":
