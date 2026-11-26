@@ -32,7 +32,7 @@ def _asset_uri(name):
     """base64 data: URI for an asset PNG, so the page is fully self-contained
     (no file-path resolution issues, works the same frozen or from source)."""
     try:
-        with open(os.path.join(_HERE, "assets", name), "rb") as f:
+        with open(app.resource_path(os.path.join("assets", name)), "rb") as f:
             return "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
     except Exception:
         return ""
@@ -156,7 +156,7 @@ def _clamp_to_monitor(x, y, w, h):
 
 
 def _load_html(name):
-    with open(os.path.join(_HERE, "webui", name), "r", encoding="utf-8") as f:
+    with open(app.resource_path(os.path.join("webui", name)), "r", encoding="utf-8") as f:
         html = f.read()
     return (html
             .replace("__BADGE_URI__", _asset_uri("badge.png"))

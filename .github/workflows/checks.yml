@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 22
       - name: Desktop app compiles
-        run: python -m py_compile desktop/*.py
+        run: python -m py_compile product/backend/*.py product/tools/*.py
       - name: Extension and terminal scripts parse
         run: for f in extension/*.js terminal/*.js; do node --check "$f"; done
       - name: Extension manifest is valid

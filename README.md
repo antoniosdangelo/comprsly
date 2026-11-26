@@ -68,10 +68,10 @@ Full policy: [comprsly.com/privacy](https://comprsly.com/privacy/)
 
 ## 6. Building from source
 
-The Windows app is Python and lives in `desktop/`.
+The Windows app is Python and lives in `product/`.
 
 ```
-cd desktop
+cd product/build
 pip install -r requirements.txt
 python main.py
 ```
@@ -82,9 +82,13 @@ Building the installer and the Microsoft Store package is covered in `docs/Build
 
 | Folder | What it is | Built with |
 |---|---|---|
-| `desktop/` | The Windows app, the main product | Python |
-| `frontend/` | The comprsly.com pages | HTML today, to be rebuilt in React and TypeScript |
-| `backend/` | The comprsly.com server: page views, download clicks, the private stats page | Cloudflare Worker |
+| `product/` | **The Windows app, the main product** | Python |
+| `product/backend/` | Its engine: detection, grammar, the local model | Python |
+| `product/frontend/` | What you see: the settings and review screens, icons | HTML, CSS |
+| `product/build/` | Packaging: PyInstaller spec, Inno Setup, the Store manifest | |
+| `product/tools/` | Dev only scripts, never shipped | Python |
+| `website/frontend/` | The comprsly.com pages | HTML today, to be rebuilt in React and TypeScript |
+| `website/backend/` | The comprsly.com server: page views, download clicks, the private stats page | Cloudflare Worker |
 | `extension/` | The browser extension | JavaScript |
 | `terminal/` | The terminal helper | Node |
 | `docs/` | Build notes, handoffs, prompts, marketing content, brand files | |
@@ -93,23 +97,23 @@ Building the installer and the Microsoft Store package is covered in `docs/Build
 ### Running the website locally
 
 ```
-cd backend
+cd website/backend
 npm install
 npx wrangler dev
 ```
 
-That serves the pages from `frontend/public` at http://localhost:8787.
+That serves the pages from `website/frontend/public` at http://localhost:8787.
 
 ### First time on a new machine
 
 1. `git clone https://github.com/antoniosdangelo/comprsly.git`
 2. `cd comprsly`
 3. `git config core.hooksPath .githooks` to turn on the secret check and the main branch push guard
-4. Copy `backend/.env.example` to `backend/.env` and fill it in. Never commit `.env`.
+4. Copy `website/backend/.env.example` to `website/backend/.env` and fill it in. Never commit `.env`.
 
 ### Branches
 
-`main` is tested code and the only branch a deploy comes from. `sandbox` is where new work goes first. Work branches are named `frontend/...`, `backend/...`, `desktop/...` or `docs/...`. Full rules in `BRANCHING.md`. Every change is explained in `CHANGELOG.md`.
+`main` is tested code and the only branch a deploy comes from. `sandbox` is where new work goes first. Work branches are named `frontend/...`, `backend/...`, `product/...` or `docs/...`. Full rules in `BRANCHING.md`. Every change is explained in `CHANGELOG.md`.
 
 ### Not in this repo on purpose
 
