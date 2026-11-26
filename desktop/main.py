@@ -2408,12 +2408,29 @@ def _vscode_terminal_pane_rect(control):
 # the user had just typed. _vscode_terminal_pane_rect existed for exactly this
 # and was never called.
 #
-# The rect returned spans the pane's full width (so _position_for docks at the
-# right edge) and the input line's height (so it is centred on that line).
-# When the caret itself has reached the badge's column, the line is about to be
-# typed under the badge, so the rect drops one line to the row below, which is
-# empty or the input box's own bottom border.
-TERMINAL_BADGE_CLEARANCE = S(8)
+# REWRITTEN 2026-11-26 after Antonio's screenshot. Putting the badge on the
+# caret's own line and then checking whether text had reached it was the wrong
+# shape of fix: the badge is 38 px and a terminal line is 17, so it bled a line
+# up and a line down whatever column it was in, and it sat on a word on the
+# line above. Both of that day's screenshots are that, not a column error.
+#
+# The row ONE LINE BELOW the caret is the input box's bottom border. In every
+# CLI that draws a box you type on the last line, so that row is decoration and
+# can never hold text. Aim there and the collision question stops existing:
+# nothing to detect, nothing to dodge, nothing to get wrong by a few pixels. It
+# is a fixed offset from the caret rather than a check that flips, so the badge
+# also stops hopping, which is the other half of what he reported.
+#
+# The badge is drawn at the line's own height (see PersistentBadge._size) so it
+# fits that row exactly.
+def _drop_one_line(left, right, line_bottom, line_h, limit_bottom):
+    """The row directly under the input line, kept inside the pane."""
+    top = line_bottom
+    if limit_bottom is not None and top + line_h > limit_bottom:
+        # No room below (caret already on the pane's last row): stay on the
+        # caret's own row rather than render outside the terminal.
+        top = line_bottom - line_h
+    return _SimpleRect(left, top, right, top + line_h)
 
 
 def _terminal_badge_rect(control, process_name, hwnd, caret_rect, app_label):
@@ -2422,12 +2439,11 @@ def _terminal_badge_rect(control, process_name, hwnd, caret_rect, app_label):
             pane = _vscode_terminal_pane_rect(control)
             if pane is None:
                 return None
-            top, bottom = caret_rect.top, caret_rect.bottom
-            line_h = max(1, bottom - top)
-            badge_left = pane.right - BADGE_ICON_SIZE - _badge_inset_for(app_label) - TERMINAL_BADGE_CLEARANCE
-            if caret_rect.right >= badge_left:
-                top, bottom = top + line_h, bottom + line_h
-            return _SimpleRect(pane.left, top, pane.right, bottom)
+            line_h = max(1, caret_rect.bottom - caret_rect.top)
+            rect = _drop_one_line(pane.left, pane.right, caret_rect.bottom,
+                                  line_h, pane.bottom)
+            rect.line_h = line_h
+            return rect
         # Windows Terminal and the classic consoles: the control is the whole
         # pane, so find the live input line from the CLI's own text.
         get_tp = getattr(control, "GetTextPattern", None)
@@ -2437,7 +2453,11 @@ def _terminal_badge_rect(control, process_name, hwnd, caret_rect, app_label):
         line = _find_terminal_input_line_rect(text_pattern, hwnd)
         if line is None:
             return None
-        return _SimpleRect(caret_rect.left, line.top, caret_rect.right, line.bottom)
+        line_h = max(1, line.bottom - line.top)
+        rect = _drop_one_line(caret_rect.left, caret_rect.right, line.bottom,
+                              line_h, caret_rect.bottom)
+        rect.line_h = line_h
+        return rect
     except Exception as e:
         log_exception(f"_terminal_badge_rect: {e!r}")
         return None
@@ -4948,7 +4968,14 @@ BADGE_INSIDE_INSET = S(16)
 # terminal/CLI specifically -- see this file's permanently-scoped terminal
 # block further down for why a general "fix the badge" ask never
 # authorizes touching this constant on its own.
-BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56), "Claude Code": S(6 + DESIGN_BADGE_SIZE)}
+# "Claude Code" REMOVED 2026-11-26, by Antonio, by name, about the terminal
+# specifically, which is what this constant's own lock above requires. It held
+# a whole badge width plus 6 so the badge would clear the typed line. The badge
+# no longer sits on a typed line at all (see _terminal_badge_rect: it is on the
+# box's border row, where text cannot go), so the override now only buys an
+# arbitrary 64 px gap on one CLI out of four. He asked for the badge to "be the
+# same on all of them"; with this gone, it is.
+BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56)}
 
 
 def _badge_inset_for(app_label):
@@ -6534,6 +6561,33 @@ class PersistentBadge:
         # separately -- popup_anchor picks this up for free since it reads
         # the same instance state show_near just set.
         self._current_app_label = None
+        # How big to draw the badge RIGHT NOW. Everywhere else in the app the
+        # badge is one fixed size, but a terminal row is about 17 px and the
+        # normal badge is 38, so a fixed badge can only ever cover the lines
+        # around it (Antonio, 2026-11-26, screenshot: it was sitting on a word
+        # on the line above). In a terminal this becomes the row's own height
+        # so the badge fits the row exactly. See _size_for_rect.
+        self._size = BADGE_ICON_SIZE
+
+    # Never shrink past this: below it the mark stops reading as the logo and
+    # gets fiddly to click. A row shorter than this is rare enough that
+    # overhanging a border row by a couple of pixels is the better trade.
+    MIN_SIZE = S(13)
+
+    def _size_for_rect(self, rect):
+        line_h = getattr(rect, "line_h", None)
+        if line_h is None:
+            return BADGE_ICON_SIZE
+        return max(self.MIN_SIZE, min(int(line_h), BADGE_ICON_SIZE))
+
+    def _apply_size(self, size):
+        """A size change has to rebuild the window: the image is baked, and
+        the label keeps the old one otherwise (same reason as
+        rebuild_for_scale, which this reuses rather than repeating)."""
+        if size == self._size:
+            return
+        self._size = size
+        self.rebuild_for_scale()
 
     def _ensure_window(self):
         if self.window is not None:
@@ -6566,7 +6620,7 @@ class PersistentBadge:
         # around the logo shows how much there is to compact/fix, redder =
         # more. Starts green. The image is regenerated in show_near when the
         # count changes.
-        icon_image = _make_heat_badge_image(BADGE_ICON_SIZE, 0)
+        icon_image = _make_heat_badge_image(self._size, 0)
         if icon_image is not None:
             self._icon_photo = ImageTk.PhotoImage(icon_image)
             icon = tk.Label(row, image=self._icon_photo, bg=BRAND_DARK, cursor="hand2")
@@ -6646,7 +6700,7 @@ class PersistentBadge:
         key = (count, checked)
         if key == self._last_heat_count or self._icon_label is None:
             return
-        img = _make_heat_badge_image(BADGE_ICON_SIZE, count, checked=checked)
+        img = _make_heat_badge_image(self._size, count, checked=checked)
         if img is not None:
             self._icon_photo = ImageTk.PhotoImage(img)
             self._icon_label.config(image=self._icon_photo)
@@ -6722,7 +6776,7 @@ class PersistentBadge:
                 # detection path, not blanket per-site, so this can't
                 # misapply to a different layout on the same site).
                 gap = BADGE_TOOLBAR_GAP + getattr(rect, "toolbar_extra_gap", 0)
-                bx = toolbar_left - gap - BADGE_ICON_SIZE
+                bx = toolbar_left - gap - self._size
             else:
                 # Fallback: tuck inside the box's own (possibly widened,
                 # see BADGE_WIDEN_RIGHT_SITES) right edge, vertically
@@ -6732,7 +6786,7 @@ class PersistentBadge:
                 # to anchor to (an unrecognized layout), or for sites that
                 # were never widened in the first place.
                 inset = _badge_inset_for(self._current_app_label)
-                bx = rect.right - BADGE_ICON_SIZE - inset
+                bx = rect.right - self._size - inset
             row_top = getattr(rect, "toolbar_row_top", None)
             row_bottom = getattr(rect, "toolbar_row_bottom", None)
             if row_top is not None and row_bottom is not None:
@@ -6741,7 +6795,7 @@ class PersistentBadge:
                 # itself, not the whole (widened) box -- "the badge should
                 # be inline with the rest of the tools," confirmed live
                 # after the box-centred version floated it above the row.
-                by = row_top + (row_bottom - row_top) // 2 - BADGE_ICON_SIZE // 2
+                by = row_top + (row_bottom - row_top) // 2 - self._size // 2
                 vshift = getattr(rect, "toolbar_row_vshift", 0)
                 by -= vshift
                 # Real bug found live 2026-08-03 (Antonio, screenshot +
@@ -6778,9 +6832,9 @@ class PersistentBadge:
                 # box_bottom-widening fix above is the exact same idea,
                 # just for the other edge.
                 top_bound = rect.top - max(0, vshift)
-                by = max(top_bound, min(by, rect.bottom - BADGE_ICON_SIZE))
+                by = max(top_bound, min(by, rect.bottom - self._size))
             else:
-                by = rect.top + box_h // 2 - BADGE_ICON_SIZE // 2
+                by = rect.top + box_h // 2 - self._size // 2
         else:
             # No real box rect (Claude's Electron composer exposes none),
             # just a caret/click point: the fallback that builds this
@@ -6789,7 +6843,7 @@ class PersistentBadge:
             # working backward through this same subtraction -- same
             # "cancels out" trick as before, just mirrored to the box's
             # estimated right edge instead of its left.
-            bx = rect.left - BADGE_ICON_SIZE - BADGE_INSIDE_INSET
+            bx = rect.left - self._size - BADGE_INSIDE_INSET
             by = rect.top - 4
         # Real risk once this always sits relative to the box rather than a
         # remembered position (2026-07-21): a narrow box near a screen edge
@@ -6806,7 +6860,7 @@ class PersistentBadge:
         anchor_x = (rect.left + rect.right) / 2
         anchor_y = (rect.top + rect.bottom) / 2
         return fit_within_window_and_monitor(
-            bx, by, BADGE_ICON_SIZE, BADGE_ICON_SIZE, anchor_x, anchor_y)
+            bx, by, self._size, self._size, anchor_x, anchor_y)
 
     def popup_anchor(self, rect):
         """Where the review card should open so it reads as attached to the
@@ -6831,8 +6885,8 @@ class PersistentBadge:
         anchor_x = (rect.left + rect.right) / 2
         anchor_y = (rect.top + rect.bottom) / 2
         corner = _card_corner(x, y, anchor_x, anchor_y)
-        card_x = x + BADGE_ICON_SIZE - POPUP_WIDTH if corner == "right" else x
-        return (card_x, y + BADGE_ICON_SIZE + 10)
+        card_x = x + self._size - POPUP_WIDTH if corner == "right" else x
+        return (card_x, y + self._size + 10)
 
     def current_badge_rect(self):
         """The badge's live (x, y, w, h), so the card can be placed somewhere
@@ -6840,12 +6894,12 @@ class PersistentBadge:
         try:
             if self.window is not None:
                 return (self.window.winfo_x(), self.window.winfo_y(),
-                        BADGE_ICON_SIZE, BADGE_ICON_SIZE)
+                        self._size, self._size)
         except Exception:
             pass
         if self.user_positioned is not None:
             return (self.user_positioned[0], self.user_positioned[1],
-                    BADGE_ICON_SIZE, BADGE_ICON_SIZE)
+                    self._size, self._size)
         return None
 
     def current_box_rect(self):
@@ -6883,10 +6937,13 @@ class PersistentBadge:
         else:
             anchor_x, anchor_y = bx, by
         corner = _card_corner(bx, by, anchor_x, anchor_y)
-        card_x = bx + BADGE_ICON_SIZE - POPUP_WIDTH if corner == "right" else bx
-        return (card_x, by + BADGE_ICON_SIZE + 10)
+        card_x = bx + self._size - POPUP_WIDTH if corner == "right" else bx
+        return (card_x, by + self._size + 10)
 
     def show_near(self, rect, suggestion_count, checked=True, app_label=None):
+        # Before _ensure_window, so a surface change rebuilds at the new size
+        # rather than drawing once at the old one and correcting next tick.
+        self._apply_size(self._size_for_rect(rect))
         self._ensure_window()
         # Which recognized app/site this box belongs to, so _position_for can
         # look up a per-site inset override (BADGE_INSIDE_INSET_OVERRIDES).
