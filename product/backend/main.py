@@ -807,11 +807,26 @@ def _hex_to_rgb(value):
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
+# product/ , the folder holding backend/, frontend/ and the shipped docs. Only
+# meaningful when running from source; a frozen build uses _MEIPASS and the
+# executable's own directory instead.
+PRODUCT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def resource_path(relative_path):
     """Bundled data files (the logo) live next to this script when running
     from source, but PyInstaller's --onefile bootloader extracts them into
     a temp _MEIPASS dir at runtime, this is the standard way to find either."""
-    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    base_path = getattr(sys, "_MEIPASS", None)
+    if base_path is None:
+        # Running from source. assets/ and webui/ live in the sibling
+        # product/frontend folder since the 2026-11-26 layout change, so the
+        # base is one level up and across, NOT this file's own directory. The
+        # frozen build still finds them at the _MEIPASS root, because
+        # Comprsly.spec maps them back to plain "assets" and "webui" there.
+        # That is deliberate: every resource_path("assets/...") call site
+        # keeps working untouched in both modes.
+        base_path = os.path.join(PRODUCT_ROOT, "frontend")
     return os.path.join(base_path, relative_path)
 
 
@@ -824,10 +839,10 @@ def install_dir_path(relative_path):
     frozen build, only in a dev run. sys.executable's OWN directory is the
     real install dir when frozen (installer.iss's DefaultDirName places
     Comprsly.exe and ACKNOWLEDGEMENTS.txt side by side); running from
-    source, that file sits in this same desktop/ folder as main.py."""
+    source, that file sits at the product/ root, one level above this file."""
     base = (os.path.dirname(os.path.abspath(sys.executable))
             if getattr(sys, "frozen", False)
-            else os.path.dirname(os.path.abspath(__file__)))
+            else PRODUCT_ROOT)
     return os.path.join(base, relative_path)
 
 

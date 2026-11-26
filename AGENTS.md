@@ -4,10 +4,10 @@ Every pull request names its owner agent, so you always know which chat to open.
 
 | Part | Owner agent |
 |---|---|
-| `desktop/` | Comprsly dev chat (Venture Assistant) |
+| `product/` | Comprsly dev chat (Venture Assistant) |
 | `extension/` | Comprsly dev chat |
-| `frontend/` | Comprsly dev chat |
-| `backend/` | Comprsly dev chat |
+| `website/frontend/` | Comprsly dev chat |
+| `website/backend/` | Comprsly dev chat |
 | `terminal/` | Comprsly dev chat |
 | `docs/` | Comprsly dev chat or the Comprsly cloud chat |
 | repo setup (.github/, .env layout, BRANCHING, AGENTS) | Orchestrator |

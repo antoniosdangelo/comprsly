@@ -81,7 +81,7 @@ WizardStyle=modern
 AppComments=Comprsly: ~1 GB install, AI "Make it Concise" model included and ready immediately (needs 8 GB RAM, 16 GB recommended). No account, no telemetry; text never leaves this machine.
 ; The onboarding flow, in order: Welcome -> Requirements -> Acknowledgements
 ; -> Preferences -> Install -> Done.
-InfoBeforeFile=ACKNOWLEDGEMENTS.txt
+InfoBeforeFile=..\ACKNOWLEDGEMENTS.txt
 DisableWelcomePage=no
 ; No install-location page ON PURPOSE: the app itself hardcodes ALL of its
 ; runtime data (settings.json, history, the ~1 GB model, the dedup and
@@ -105,7 +105,7 @@ VersionInfoVersion=1.1.1.0
 ; setup upgrades cleanly and keeps the user's settings/history/model.
 ; Gives the downloaded setup file itself the Comprsly logo, which is what
 ; shows in the Downloads folder before anything is installed.
-SetupIconFile=assets\icon.ico
+SetupIconFile=..\frontend\assets\icon.ico
 ; Replaces Inno's stock light-blue box-and-disc artwork with the real mark on
 ; the app's own dark background. That bitmap is the very first thing anyone
 ; sees of Comprsly and the default makes it look like generic shareware.
@@ -159,7 +159,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut (right-click it →
 Source: "dist\Comprsly.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Licences and notices travel with the app, which is what Apache 2.0 and the
 ; LGPL both ask for. Also reachable after install, not only during it.
-Source: "ACKNOWLEDGEMENTS.txt"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\ACKNOWLEDGEMENTS.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; The AI model is bundled directly (see the header note) so it's ready
 ; immediately after install, with no separate download step. Lands exactly
 ; where ModelAlreadyPresent() (in [Code] below) checks for it, so the
