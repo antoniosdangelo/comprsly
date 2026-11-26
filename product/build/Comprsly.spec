@@ -19,10 +19,10 @@ _pn_d, _pn_b, _pn_h = collect_all('pythonnet')
 _cl_d, _cl_b, _cl_h = collect_all('clr_loader')
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    ['../backend/main.py'],
+    pathex=['../backend'],
     binaries=[(os.path.join(_uia_bin_dir, 'UIAutomationClient_VC140_X64.dll'), 'uiautomation/bin'), (os.path.join(_uia_bin_dir, 'UIAutomationClient_VC140_X86.dll'), 'uiautomation/bin')] + _wv_b + _pn_b + _cl_b,
-    datas=[('assets', 'assets'), ('webui', 'webui')] + _wv_d + _pn_d + _cl_d,
+    datas=[('../frontend/assets', 'assets'), ('../frontend/webui', 'webui')] + _wv_d + _pn_d + _cl_d,
     # winspell drives the Windows spell-check COM API through comtypes.
     # Naming these explicitly stops PyInstaller silently omitting parts of
     # comtypes, which is what disabled spelling in the packaged build.
@@ -61,7 +61,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets/icon.ico'],
+    icon=['../frontend/assets/icon.ico'],
     # Names the app to Windows itself (Task Manager, taskbar tooltip, file
     # properties). The exe file name alone is what the OS falls back to
     # without this, which is why it still said TokenSaver everywhere.
