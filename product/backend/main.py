@@ -979,13 +979,41 @@ def load_saved_badge_position():
     return x, y
 
 
-def save_badge_position(x, y):
+def _write_json_atomically(path, data):
+    """Write JSON so a crash can never leave a half written or empty file.
+
+    `open(path, "w")` truncates the real file the instant it is called, before
+    a single byte of the new content is written. Kill the process in that gap,
+    which for a tray app people close by hand is not a rare event, and the file
+    is left empty. Every loader here catches the error and quietly returns a
+    default, so the symptom is settings resetting themselves or a whole
+    history of token savings vanishing, with nothing in the log.
+
+    Writing beside the file and renaming over it closes that gap: os.replace is
+    atomic on Windows and on POSIX, so a reader sees either the old file or the
+    new one, never a torn one. Same approach the log rotation here already
+    uses. Returns True when the data is safely on disk.
+    """
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
-        with open(BADGE_POSITION_PATH, "w", encoding="utf-8") as f:
-            json.dump({"x": x, "y": y}, f)
+        tmp = "%s.tmp%d" % (path, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        return True
     except Exception:
-        pass
+        # Best effort cleanup; a stray .tmp is harmless, a crash here is not.
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+        return False
+
+
+def save_badge_position(x, y):
+    _write_json_atomically(BADGE_POSITION_PATH, {"x": x, "y": y})
 
 
 # Real ask 2026-07-20: a real settings window (Handy's own settings UI was
@@ -1067,12 +1095,7 @@ def load_settings():
 
 
 def save_settings(settings):
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f)
-    except Exception:
-        pass
+    _write_json_atomically(SETTINGS_PATH, settings)
 
 
 def consume_version_update_flag():
@@ -1113,12 +1136,10 @@ def append_history(entry):
     history = load_history()
     history.append(entry)
     history = history[-HISTORY_MAX_ENTRIES:]
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(history, f)
-    except Exception:
-        pass
+    # Rewrites all HISTORY_MAX_ENTRIES rows every time, which is fine at this
+    # size and is why the atomic write matters: the blast radius of a torn
+    # write here is the whole history, not one row.
+    _write_json_atomically(HISTORY_PATH, history)
 
 
 # Real ask 2026-07-20: launch-on-login via the standard per-user Registry
@@ -4522,11 +4543,18 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
         # was itself flagged as the likely cause of the visible double-jump
         # glitch. Repeating it here would also risk undoing the click that
         # just put the caret in the composer.
-        current_fg = ctypes.windll.user32.GetForegroundWindow()
-        log(
-            f"apply_new_text: about to send Ctrl+A/Ctrl+V, foreground now "
-            f"{_window_title(current_fg)}, focus_verified={focus_state}"
-        )
+        # Diagnostic only, so it must never be the thing that aborts an
+        # apply: _window_title reads the target window through UIA, which
+        # throws if that window has just gone away. Raising here used to skip
+        # the clipboard restore below entirely.
+        try:
+            current_fg = ctypes.windll.user32.GetForegroundWindow()
+            log(
+                f"apply_new_text: about to send Ctrl+A/Ctrl+V, foreground now "
+                f"{_window_title(current_fg)}, focus_verified={focus_state}"
+            )
+        except Exception:
+            log_exception("apply_new_text: foreground probe")
 
         # Mark our own synthetic keys so the hook doesn't mistake them for
         # dictation and flag the buffer untrusted (see _self_injecting).
@@ -4557,10 +4585,16 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
                 time.sleep(0.05)  # small settle margin even in the worst case
         finally:
             _self_injecting[0] = False
-
-        # Put the user's own clipboard back (Win32 again, same reasoning),
-        # whatever format it held: text, image, files.
-        _restore_clipboard(original)
+            # Put the user's own clipboard back (Win32 again, same reasoning),
+            # whatever format it held: text, image, files.
+            #
+            # Moved INTO the finally 2026-11-26. It used to sit after this
+            # block, so anything that raised between putting our text on the
+            # clipboard and getting here left Comprsly's rewritten prompt
+            # sitting on the user's clipboard, and whatever they had copied,
+            # a screenshot or a set of files, gone with no message. On the
+            # normal path this runs at exactly the same moment it always did.
+            _restore_clipboard(original)
 
         # Real gap found 2026-07-20: the paste itself is a synthetic
         # keystroke, correctly ignored by the anti-self-trigger filter, so

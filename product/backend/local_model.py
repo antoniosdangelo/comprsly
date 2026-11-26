@@ -786,10 +786,34 @@ def model_dir_size_bytes():
 # still never leaves the machine. Deliberately stdlib-only (urllib), so no
 # huggingface_hub dependency has to be bundled into the exe.
 _DOWNLOAD_REPO = "khanuckaeff/Qwen2.5-1.5B-Instruct-Olive-Onnx"
+# PINNED 2026-11-26. This repo is a personal account, not Microsoft's and not
+# ours, and "main" means "whatever is there today": if the owner changes the
+# files, deletes the account, or loses it, every user who installs after that
+# gets whatever is served next, and there is no checksum anywhere to notice. A
+# commit is immutable, so pinning to one removes that question entirely.
+# Verified against the live API 2026-11-26: 14 files under cpu_and_mobile,
+# last modified 2026-05-09. Bump this ONLY after downloading the new revision
+# and running the model locally.
+_DOWNLOAD_REVISION = "39df7b3ef27066ddea50f60284a77ebc17858b1c"
 _DOWNLOAD_SUBFOLDER = "cpu_and_mobile"
 _DOWNLOAD_DEST_NAME = "qwen2.5-1.5b-instruct-int4-cpu"
 _DOWNLOAD_APPROX_MB = 1010
 _UA = {"User-Agent": "Comprsly/1.0"}
+
+def _is_plain_filename(name):
+    """True only for a bare filename: no directory, no traversal, no drive.
+
+    Fails closed on anything surprising, because its only caller uses it to
+    decide whether a string from the network is safe to write to disk.
+    """
+    if not name or name in (".", ".."):
+        return False
+    if "/" in name or "\\" in name or chr(0) in name:
+        return False
+    if name.startswith("."):
+        return False
+    return os.path.basename(name) == name and not os.path.isabs(name)
+
 
 # Shared progress state so the settings UI can poll without threading its own
 # state through. done/total are bytes; active is True only mid-download.
@@ -994,7 +1018,8 @@ def download_model(progress_cb=None):
     _last_progress_write[0] = 0
     try:
         # 1. List the exact files that make up this model.
-        api = "https://huggingface.co/api/models/" + _DOWNLOAD_REPO
+        api = ("https://huggingface.co/api/models/%s/revision/%s"
+               % (_DOWNLOAD_REPO, _DOWNLOAD_REVISION))
         info = _json.load(urllib.request.urlopen(
             urllib.request.Request(api, headers=_UA), timeout=30))
         files = [f["rfilename"] for f in info.get("siblings", [])
@@ -1006,7 +1031,7 @@ def download_model(progress_cb=None):
         # 2. Total size up front (best-effort) so progress is a real percent.
         total = 0
         for rf in files:
-            url = "https://huggingface.co/%s/resolve/main/%s" % (_DOWNLOAD_REPO, rf)
+            url = "https://huggingface.co/%s/resolve/%s/%s" % (_DOWNLOAD_REPO, _DOWNLOAD_REVISION, rf)
             try:
                 h = urllib.request.urlopen(
                     urllib.request.Request(url, method="HEAD", headers=_UA), timeout=30)
@@ -1037,7 +1062,15 @@ def download_model(progress_cb=None):
         _FILE_RETRY_BACKOFF_SECONDS = 2
         for rf in files:
             name = rf[len(_DOWNLOAD_SUBFOLDER) + 1:]
-            url = "https://huggingface.co/%s/resolve/main/%s" % (_DOWNLOAD_REPO, rf)
+            # This name came off the network. "cpu_and_mobile/../../../x.exe"
+            # passes the startswith filter above, and os.path.join would then
+            # write outside the download directory. A model file is always one
+            # plain filename, so anything else is refused rather than cleaned
+            # up: there is no legitimate case here worth preserving.
+            if not _is_plain_filename(name):
+                raise RuntimeError(
+                    "refusing a model file with an unexpected path: %r" % (rf,))
+            url = "https://huggingface.co/%s/resolve/%s/%s" % (_DOWNLOAD_REPO, _DOWNLOAD_REVISION, rf)
             with _download_lock:
                 _download_state["file"] = name
             done_before_file = done
