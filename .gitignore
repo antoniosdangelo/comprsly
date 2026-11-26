@@ -56,3 +56,9 @@ PR.md
 
 # Working notes for Antonio, deliberately untracked
 docs/REPO_AND_CLOUDFLARE_MAP.md
+
+# There is no website in this repo and there must never be one again. These
+# lines are a backstop, not housekeeping: removing the old website/ ignore
+# rules and then running `git add -A` in the same commit is exactly how the
+# compiled site got committed back into the public repo on 2026-11-26.
+website/
