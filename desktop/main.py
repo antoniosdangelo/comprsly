@@ -2416,7 +2416,7 @@ def _vscode_terminal_pane_rect(control):
 TERMINAL_BADGE_CLEARANCE = S(8)
 
 
-def _terminal_badge_rect(control, process_name, hwnd, caret_rect):
+def _terminal_badge_rect(control, process_name, hwnd, caret_rect, app_label):
     try:
         if process_name in VSCODE_PROCESSES:
             pane = _vscode_terminal_pane_rect(control)
@@ -2424,7 +2424,7 @@ def _terminal_badge_rect(control, process_name, hwnd, caret_rect):
                 return None
             top, bottom = caret_rect.top, caret_rect.bottom
             line_h = max(1, bottom - top)
-            badge_left = pane.right - BADGE_ICON_SIZE - BADGE_INSIDE_INSET - TERMINAL_BADGE_CLEARANCE
+            badge_left = pane.right - BADGE_ICON_SIZE - _badge_inset_for(app_label) - TERMINAL_BADGE_CLEARANCE
             if caret_rect.right >= badge_left:
                 top, bottom = top + line_h, bottom + line_h
             return _SimpleRect(pane.left, top, pane.right, bottom)
@@ -4950,6 +4950,18 @@ BADGE_INSIDE_INSET = S(16)
 # authorizes touching this constant on its own.
 BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56), "Claude Code": S(6 + DESIGN_BADGE_SIZE)}
 
+
+def _badge_inset_for(app_label):
+    """Distance from the box's right edge to the badge's right edge.
+
+    One source of truth, because two places need the same number: _position_for
+    puts the badge there, and _terminal_badge_rect has to know which column it
+    landed in to keep typed text out from under it. Those two drifted apart on
+    the first pass (the terminal one left the override out) and let Claude Code
+    type about seven characters under its own badge.
+    """
+    return BADGE_INSIDE_INSET + BADGE_INSIDE_INSET_OVERRIDES.get(app_label, 0)
+
 # Gap between the badge's right edge and the real toolbar control it's
 # docking against once _toolbar_cluster_left finds one (2026-07-30). Small
 # and fixed on purpose -- this is "distance from the very next control," a
@@ -6719,7 +6731,7 @@ class PersistentBadge:
                 # _toolbar_cluster_left couldn't find a real toolbar control
                 # to anchor to (an unrecognized layout), or for sites that
                 # were never widened in the first place.
-                inset = BADGE_INSIDE_INSET + BADGE_INSIDE_INSET_OVERRIDES.get(self._current_app_label, 0)
+                inset = _badge_inset_for(self._current_app_label)
                 bx = rect.right - BADGE_ICON_SIZE - inset
             row_top = getattr(rect, "toolbar_row_top", None)
             row_bottom = getattr(rect, "toolbar_row_bottom", None)
@@ -9920,7 +9932,7 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # See _terminal_badge_rect for the rule. The blind slice below
             # stays as the last fallback only.
             if raw_rect is not None and process_name in TERMINAL_HOST_PROCESSES:
-                line_rect = _terminal_badge_rect(control, process_name, llm_hwnd, raw_rect)
+                line_rect = _terminal_badge_rect(control, process_name, llm_hwnd, raw_rect, app_label)
                 if line_rect is not None:
                     raw_rect = line_rect
                 else:

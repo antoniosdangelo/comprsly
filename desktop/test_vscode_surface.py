@@ -247,25 +247,26 @@ class TerminalBadgeInLine(unittest.TestCase):
 
     def test_spans_the_pane_on_the_caret_line(self):
         caret = (400, 960, 411, 978)
-        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
         self.assertEqual((r.left, r.right), (100, 1900))
         self.assertEqual((r.top, r.bottom), (960, 978))
 
     def test_badge_lands_right_of_the_caret_not_on_the_text(self):
         caret = (400, 960, 411, 978)
-        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
-        badge_left = r.right - app.BADGE_ICON_SIZE - app.BADGE_INSIDE_INSET
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
+        badge_left = r.right - app.BADGE_ICON_SIZE - app._badge_inset_for("Claude Code")
         self.assertGreater(badge_left, caret[2])
 
     def test_drops_one_line_when_the_caret_reaches_the_badge(self):
-        caret = (1880, 960, 1891, 978)
-        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
+        caret = (1900 - app.BADGE_ICON_SIZE - app._badge_inset_for("Claude Code"), 960,
+                 1911 - app.BADGE_ICON_SIZE - app._badge_inset_for("Claude Code"), 978)
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret), "Claude Code")
         self.assertEqual((r.top, r.bottom), (978, 996))
 
     def test_no_pane_found_keeps_the_old_fallback(self):
         caret = (400, 960, 411, 978)
         lone = FakeControl("Terminal 1, input", caret, parent=None)
-        self.assertIsNone(app._terminal_badge_rect(lone, "code.exe", 0, app._SimpleRect(*caret)))
+        self.assertIsNone(app._terminal_badge_rect(lone, "code.exe", 0, app._SimpleRect(*caret), "Claude Code"))
 
 
 if __name__ == "__main__":
