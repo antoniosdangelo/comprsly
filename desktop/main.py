@@ -616,7 +616,7 @@ BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 # Displayed in the settings status bar and About. MUST be bumped together
 # with version_info.txt and installer.iss (it drifted to a stale 0.9.4 while
 # those advanced, so the UI lied about the version -- 2026-07-22).
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 
 def _heat_color(count):
