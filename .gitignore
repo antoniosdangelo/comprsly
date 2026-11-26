@@ -16,9 +16,9 @@ node_modules/
 __pycache__/
 *.pyc
 .wrangler/
-desktop/build/
-desktop/dist/
-desktop/installer-output/
+product/build/build/
+product/build/dist/
+product/build/installer-output/
 
 # Large media and packages
 *.mp4
@@ -36,7 +36,6 @@ desktop.ini
 .DS_Store
 
 # Vite build output, rebuilt by `npm run build` on every deploy
-frontend/dist/
 
 # Local git worktrees
 .worktrees/
@@ -46,7 +45,20 @@ frontend/test-results/
 frontend/playwright-report/
 
 # Surface probe output (local diagnostic, not a deliverable)
-desktop/probe-surfaces.jsonl
+product/tools/probe-surfaces.jsonl
 
 # Relative-path build used only for artifact previews
-frontend/dist-preview/
+
+# Handover notes written per branch for review, never committed
+PR.md
+*/PR.md
+**/PR.md
+
+# Working notes for Antonio, deliberately untracked
+docs/REPO_AND_CLOUDFLARE_MAP.md
+
+# There is no website in this repo and there must never be one again. These
+# lines are a backstop, not housekeeping: removing the old website/ ignore
+# rules and then running `git add -A` in the same commit is exactly how the
+# compiled site got committed back into the public repo on 2026-11-26.
+website/

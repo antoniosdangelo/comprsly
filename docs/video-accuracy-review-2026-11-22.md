@@ -2,7 +2,7 @@
 
 **Reviewed:** 2026-11-22 by the Comprsly Builder session, at dev-88's request via Orchestrator.
 **Subject:** `Personal Website\frontend\public\demos\comprsly.mp4` (1920x1080, 29.4s) and its source `Personal Website\tools\video\comprsly\video.html`.
-**Checked against:** `desktop/main.py` at `APP_VERSION = "1.0.67"`, the running product's own source, not the website and not `brand-spec.md`.
+**Checked against:** `product/backend/main.py` at `APP_VERSION = "1.0.67"`, the running product's own source, not the website and not `brand-spec.md`.
 
 ## Verdict
 

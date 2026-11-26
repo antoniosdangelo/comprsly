@@ -1,6 +1,6 @@
 # Where Comprsly works
 
-What the app actually recognises today, read out of `desktop/main.py` at
+What the app actually recognises today, read out of `product/backend/main.py` at
 `APP_VERSION = "1.0.67"`, not from memory or the website.
 
 Keep this file honest. It is the source for the website's claims, and the last
@@ -108,7 +108,7 @@ Three things fall out of that:
    chain, a `GroupControl` at 1001x612. The parent directly above the caret
    shares the caret's own 7x17 rect, so the walk has to continue past it.
 
-**Implemented 2026-11-22**, on branch `desktop/vscode-surface`:
+**Implemented 2026-11-22**, on branch `product/vscode-surface`:
 
 - `code.exe`, `cursor.exe` and `windsurf.exe` joined `TERMINAL_HOST_PROCESSES`,
   so they pass through the same AI-CLI-descendant gate as every other
@@ -192,7 +192,7 @@ is captured rather than reconstructed.
 ## Running the probe
 
 ```
-cd desktop
+cd product/build
 "C:/Users/anton/AppData/Local/Python/pythoncore-3.14-64/python.exe" tools_probe_surfaces.py
 ```
 
