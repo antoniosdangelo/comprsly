@@ -2400,6 +2400,49 @@ def _vscode_terminal_pane_rect(control):
     return None
 
 
+# Terminal badge rule (2026-11-25, Antonio, by name): on every terminal the
+# badge sits at the RIGHT END OF THE INPUT LINE, inside the pane, and never on
+# top of typed text. Measured from the live log first: in VS Code the focused
+# control is the 11 px wide caret, and _position_for treats anything under
+# 100 px wide as "dock just LEFT of it", so the badge rode on top of the text
+# the user had just typed. _vscode_terminal_pane_rect existed for exactly this
+# and was never called.
+#
+# The rect returned spans the pane's full width (so _position_for docks at the
+# right edge) and the input line's height (so it is centred on that line).
+# When the caret itself has reached the badge's column, the line is about to be
+# typed under the badge, so the rect drops one line to the row below, which is
+# empty or the input box's own bottom border.
+TERMINAL_BADGE_CLEARANCE = S(8)
+
+
+def _terminal_badge_rect(control, process_name, hwnd, caret_rect):
+    try:
+        if process_name in VSCODE_PROCESSES:
+            pane = _vscode_terminal_pane_rect(control)
+            if pane is None:
+                return None
+            top, bottom = caret_rect.top, caret_rect.bottom
+            line_h = max(1, bottom - top)
+            badge_left = pane.right - BADGE_ICON_SIZE - BADGE_INSIDE_INSET - TERMINAL_BADGE_CLEARANCE
+            if caret_rect.right >= badge_left:
+                top, bottom = top + line_h, bottom + line_h
+            return _SimpleRect(pane.left, top, pane.right, bottom)
+        # Windows Terminal and the classic consoles: the control is the whole
+        # pane, so find the live input line from the CLI's own text.
+        get_tp = getattr(control, "GetTextPattern", None)
+        text_pattern = get_tp() if get_tp else None
+        if text_pattern is None:
+            return None
+        line = _find_terminal_input_line_rect(text_pattern, hwnd)
+        if line is None:
+            return None
+        return _SimpleRect(caret_rect.left, line.top, caret_rect.right, line.bottom)
+    except Exception as e:
+        log_exception(f"_terminal_badge_rect: {e!r}")
+        return None
+
+
 def app_label_for(process_name, hwnd):
     """Known-LLM label for whatever's in the foreground right now: by
     process name first (a real installed desktop app), then by browser tab
@@ -9870,11 +9913,21 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # positioning specifically, by name, in so many words -- a
             # general "fix the badge" or "fix Claude Code" request does
             # NOT authorize touching this block. Plain blind slice only.
+            #
+            # REOPENED 2026-11-25 by Antonio, by name: "fix the terminal badge
+            # and make sure that is the same on all of them... it should not
+            # be overlapping the main text ever... it live within the line".
+            # See _terminal_badge_rect for the rule. The blind slice below
+            # stays as the last fallback only.
             if raw_rect is not None and process_name in TERMINAL_HOST_PROCESSES:
-                raw_rect = _SimpleRect(
-                    raw_rect.left, raw_rect.bottom - TERMINAL_INPUT_BOX_HEIGHT_GUESS,
-                    raw_rect.right, raw_rect.bottom,
-                )
+                line_rect = _terminal_badge_rect(control, process_name, llm_hwnd, raw_rect)
+                if line_rect is not None:
+                    raw_rect = line_rect
+                else:
+                    raw_rect = _SimpleRect(
+                        raw_rect.left, raw_rect.bottom - TERMINAL_INPUT_BOX_HEIGHT_GUESS,
+                        raw_rect.right, raw_rect.bottom,
+                    )
 
             # Real bug found live 2026-07-25 (Antonio, screenshot: badge
             # floating in an odd spot -- "everywhere else is fine but on

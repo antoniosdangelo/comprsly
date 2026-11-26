@@ -237,5 +237,36 @@ class AiCliDetection(unittest.TestCase):
             self.assertNotIn(never, app.AI_CLI_DESCENDANT_PROCESSES)
 
 
+class TerminalBadgeInLine(unittest.TestCase):
+    """2026-11-25: the badge sits at the right end of the input line, never on typed text."""
+
+    def _vscode(self, caret):
+        pane = FakeControl("Terminal 1", (100, 200, 1900, 1000))
+        wrap = FakeControl("", caret, parent=pane)
+        return FakeControl("Terminal 1, input", caret, parent=wrap)
+
+    def test_spans_the_pane_on_the_caret_line(self):
+        caret = (400, 960, 411, 978)
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
+        self.assertEqual((r.left, r.right), (100, 1900))
+        self.assertEqual((r.top, r.bottom), (960, 978))
+
+    def test_badge_lands_right_of_the_caret_not_on_the_text(self):
+        caret = (400, 960, 411, 978)
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
+        badge_left = r.right - app.BADGE_ICON_SIZE - app.BADGE_INSIDE_INSET
+        self.assertGreater(badge_left, caret[2])
+
+    def test_drops_one_line_when_the_caret_reaches_the_badge(self):
+        caret = (1880, 960, 1891, 978)
+        r = app._terminal_badge_rect(self._vscode(caret), "code.exe", 0, app._SimpleRect(*caret))
+        self.assertEqual((r.top, r.bottom), (978, 996))
+
+    def test_no_pane_found_keeps_the_old_fallback(self):
+        caret = (400, 960, 411, 978)
+        lone = FakeControl("Terminal 1, input", caret, parent=None)
+        self.assertIsNone(app._terminal_badge_rect(lone, "code.exe", 0, app._SimpleRect(*caret)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
