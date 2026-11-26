@@ -9,7 +9,8 @@ per-occurrence and span-based (start/end offsets into the real text), not a
 blanket whole-text transform, so the UI can show and accept them one at a
 time, Grammarly-style, as well as apply all of them together in one shot.
 
-Same rule *categories* as extension/suggestions.js and terminal/suggestions.js,
+Same rule *categories* the old Token Saver prototypes used (an extension and
+a CLI wrapper, both deleted 2026-11-26 as dead v0.1.0 code),
 kept as a direct port rather than a shared import across languages, each
 runtime (browser, Node, Python/native) is sandboxed from the others, so a
 small amount of deliberate duplication here is the honest tradeoff, not an
