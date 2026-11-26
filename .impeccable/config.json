@@ -1,0 +1,44 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "docs/content/templates/video-scene-anim.html"
+        ],
+        "createdAt": "2026-11-26T20:53:46.551Z",
+        "reason": "render fixture: the img src is filled by the scene script at render time, never shipped empty"
+      },
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": [
+          "docs/content/templates/video-scene.html"
+        ],
+        "createdAt": "2026-11-26T20:53:46.700Z",
+        "reason": "render fixture: the img src is filled by the scene script at render time, never shipped empty"
+      },
+      {
+        "rule": "buried-raster",
+        "value": "*",
+        "files": [
+          "docs/content/templates/video-scene-anim.html"
+        ],
+        "createdAt": "2026-11-26T20:53:46.868Z",
+        "reason": "render fixture: opacity 0 is the start of an authored animation, the frame is captured after it plays"
+      },
+      {
+        "rule": "buried-raster",
+        "value": "*",
+        "files": [
+          "docs/content/templates/video-scene.html"
+        ],
+        "createdAt": "2026-11-26T20:53:47.043Z",
+        "reason": "render fixture: opacity 0 is the start of an authored animation, the frame is captured after it plays"
+      }
+    ]
+  }
+}
