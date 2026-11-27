@@ -1,30 +1,32 @@
-# Comprsly
+# Comprsly, the product
 
-Comprsly is a Windows desktop app that helps you write better prompts in AI chat apps (Claude, ChatGPT, Gemini, Perplexity, Copilot, etc). It runs a local on-device grammar and compression engine, no prompt text ever leaves your machine.
+Comprsly fixes your spelling and grammar as you type in AI chats, then optionally shortens the whole prompt with a small AI model that runs on your own machine. Nothing you type leaves it.
+
+**Windows 10 or 11.** Version 1.1.1, live in the Microsoft Store: [Get Comprsly](https://apps.microsoft.com/detail/9N8W5HPJ4DHV). Free, no account. A macOS version is built and in testing, not released.
 
 **Website:** https://comprsly.com
 
-## Status
+## What is in here
 
-Currently in private beta, testing builds are shared directly with early users. Public release, including code signing, is planned but not live yet.
+| Folder | What it is |
+|---|---|
+| `backend/` | The engine: detection, grammar, the local model, the tests, and `platform_mac/` |
+| `frontend/` | The settings, onboarding and review screens, and the icons |
+| `build/` | The PyInstaller specs, Inno Setup, the Store manifest, the requirements files |
+| `tools/` | Dev only scripts, never shipped |
 
-## Requirements
-
-- Windows 10/11
-- ~50 MB for the installer, plus a one-time in-app model download
-
-## Installation
-
-Download `ComprslySetup.exe` from the latest release and run it. See `SETUP-README.txt` for details.
-
-## Building from source
+## Running it from source
 
 ```
-pip install -r requirements.txt
-python main.py
+pip install -r build/requirements.txt
+python backend/main.py
 ```
 
-The installer is built with PyInstaller (`Comprsly.spec`) and Inno Setup (`installer.iss`).
+Tests: `python -m unittest discover -s backend -p "test_*.py"`.
+
+The installer is PyInstaller (`build/Comprsly.spec`) plus Inno Setup (`build/installer.iss`); `build/Comprsly-mac.spec` makes the `.app`. Full instructions are in [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+Installing a release build is covered in `SETUP-README.txt`. Everything else, including versions, what Comprsly recognizes and how to build it, is in the repo's main [README](../README.md).
 
 ## License
 

@@ -1,124 +1,61 @@
 # Comprsly
 
-Comprsly fixes your spelling and grammar as you type in AI chats, then optionally shortens the whole prompt using a small AI model that runs entirely on your own PC.
+Comprsly fixes your spelling and grammar as you type in AI chats, then optionally shortens the whole prompt using a small AI model that runs entirely on your own PC. Nothing you type leaves your computer.
 
-Website: [comprsly.com](https://comprsly.com) · Microsoft Store: [Get Comprsly](https://apps.microsoft.com/detail/9N8W5HPJ4DHV)
+[comprsly.com](https://comprsly.com) · [Get it free on the Microsoft Store](https://apps.microsoft.com/detail/9N8W5HPJ4DHV)
 
-**Versions.** The Microsoft Store has 1.0.3.0. This repo's `main` is 1.1.0, which adds Codex CLI, Gemini CLI and Copilot CLI detection, and goes to the Store next. Until then, those three CLIs work only in a build from source.
+![The Comprsly review card, listing three ticked spelling and grammar fixes above an Apply 3 fixes button](docs/screenshot.png)
 
-## 1. What you need
+**Windows 10 and 11.** Version 1.1.1, the same version that is in the Store. A macOS version is built and in testing: there is no Mac download and no date. There is no Linux version.
 
-**Windows 10 or Windows 11.** There is no Mac or Linux version yet, because Comprsly reads Windows text fields directly.
+## What it does
 
-**Fully tested AI chats:** Claude (including Claude Code), ChatGPT, Gemini (including the Chrome side panel), Perplexity, Copilot, Grok, DeepSeek.
+A small round badge appears in the box you are already typing in. Click it and you get two steps.
 
-**Also recognized:** Le Chat, Poe, Hugging Face, You.com, Pi, Character.AI.
+1. **Spelling and grammar.** Each fix is listed with the old text struck through and the correction beside it. Confident ones are ticked, less certain ones are left for you to check. Nothing changes until you click Apply.
+2. **Make it concise.** Optional, and runs the local model. Your prompt and the shorter version sit side by side with the tokens saved, and again nothing changes until you click.
 
-**Terminals:** Windows Terminal, PowerShell, Command Prompt, Git Bash, WSL.
+**Where it appears:** Claude (including Claude Code), ChatGPT, Gemini (including the Chrome side panel), Perplexity, Copilot, Grok and DeepSeek, plus Le Chat, Poe, Hugging Face, You.com, Pi and Character.AI.
 
-It works in the browser and in desktop apps. Everywhere else it stays out of the way, by design.
+**In a terminal:** Windows Terminal, PowerShell, Command Prompt, Git Bash, WSL, and the integrated terminal in VS Code, Cursor and Windsurf. It only wakes up when an AI CLI is actually running there, so an ordinary prompt is left alone. The CLIs it recognises are Claude Code, Codex CLI, Copilot CLI and Gemini CLI.
 
-## 2. Install
+Everywhere else it stays out of the way, by design.
 
-1. Open the [Microsoft Store listing](https://apps.microsoft.com/detail/9N8W5HPJ4DHV) and click Get.
-2. Launch Comprsly once. A short setup screen walks you through it.
-3. Close the window. Comprsly keeps running in the background and appears when you type in a supported app.
+## Install
 
-It is free, and there is no account to create.
+Open the [Microsoft Store listing](https://apps.microsoft.com/detail/9N8W5HPJ4DHV) and click Get. Launch Comprsly once and a short setup screen walks you through it. After that it runs in the background and appears when you type in a supported app. It is free and there is no account.
 
-## 3. First use
+## Privacy
 
-Type or paste anything into a supported AI chat. A small round Comprsly badge appears in the corner of the box. Click it.
-
-**Step 1, spelling and grammar.** You get a list of fixes with the old text struck through and the correction beside it, each tagged with its kind, like spelling or grammar. Confident fixes are already ticked. Less certain ones are left unticked for you to check. Click **Apply** to make the ticked changes, or **Dismiss** to leave your text alone.
-
-**Step 2, make it concise.** This is optional and runs the local AI model. It rewrites your prompt shorter, then shows your original and the shortened version side by side with how many tokens it saved. Nothing is changed until you click **Apply**.
-
-Your text is never altered without you clicking.
-
-## 4. Settings, and turning things off
-
-Right click the Comprsly icon in the system tray and open Settings. There are four pages.
-
-| Page | What is there |
-|---|---|
-| **General** | Light and dark theme, and the **AI chat apps** toggle |
-| **AI** | Turn the shortening step on or off, and manage the model |
-| **History** | Your token savings for the last 7 days |
-| **About** | Version and links |
-
-**To stop Comprsly appearing anywhere** without uninstalling it, turn off **AI chat apps** on the General page.
-
-**To keep spelling and grammar but drop the AI shortening**, turn off the toggle on the AI page. Spelling and grammar need no model and keep working.
-
-**To free up space or memory**, the AI page can **Unload from memory** (keeps the model on disk) or **Remove from device** (deletes it, about 1 GB back). You can download it again from the same page later.
-
-## 5. Privacy
-
-**Nothing you type ever leaves your computer.**
-
-- Spelling and grammar run on your PC with a rules engine. No model and no network.
-- The shortening step uses a small open model that runs locally on your CPU.
-- There is no account, no sign in, and no telemetry.
-- The only time Comprsly uses the network is getting the app itself, and downloading the model again if you removed it.
-
-Settings, history and logs live in `%LOCALAPPDATA%\Comprsly`, on your machine only.
+Spelling and grammar run on your PC with a rules engine: no model, no network. The shortening step uses a small open model running locally on your CPU. There is no account, no sign in and no telemetry. Settings, history and logs live in `%LOCALAPPDATA%\Comprsly`, on your machine only.
 
 Full policy: [comprsly.com/privacy](https://comprsly.com/privacy/)
 
-## 6. Building from source
-
-The Windows app is Python and lives in `product/`.
+## Build it yourself
 
 ```
-cd product/build
-pip install -r requirements.txt
-python main.py
+pip install -r product/build/requirements.txt
+python product/backend/main.py
 ```
 
-Building the installer and the Microsoft Store package is covered in `docs/Build.md`.
+The tests:
 
-### What is in this repo
+```
+python -m unittest discover -s product/backend -p "test_*.py"
+```
 
-| Folder | What it is | Built with |
-|---|---|---|
-| `product/` | **The Windows app, the main product** | Python |
-| `product/backend/` | Its engine: detection, grammar, the local model | Python |
-| `product/frontend/` | What you see: the settings and review screens, icons | HTML, CSS |
-| `product/build/` | Packaging: PyInstaller spec, Inno Setup, the Store manifest | |
-| `product/tools/` | Dev only scripts, never shipped | Python |
-| `docs/` | How to install, use and build the app | |
-| `tools/` | One off helper scripts | Python |
+More detail, including how to package the installer, is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### First time on a new machine
+## Help
 
-1. `git clone https://github.com/antoniosdangelo/comprsly.git`
-2. `cd comprsly`
-3. `git config core.hooksPath .githooks` to turn on the secret check and the main branch push guard
-4. Install the app's Python dependencies: `pip install -r product/build/requirements.txt`
-
-### Branches
-
-`main` is tested code. `sandbox` is where new work goes first. Work branches are named `product/...`, `ci/...` or `docs/...`.
-
-The comprsly.com site is **not in this repo.** It lives in a separate private repo, `comprsly-website`, along with its Cloudflare Worker, its analytics and its contact relay. Full rules in `BRANCHING.md`. Every change is explained in `CHANGELOG.md`.
-
-### Not in this repo on purpose
-
-Secrets (`.env`), built installers, and the large videos in `docs/content`.
-
-## 7. Troubleshooting
-
-**The badge does not appear.** Check that **AI chat apps** is on in Settings, General. Then check you are in a chat Comprsly recognizes, from the list above. The badge only shows once there is text in the box.
-
-**The badge is in the wrong place.** Positioning is measured per site. If it looks wrong on a site in the tested list, that is a bug worth reporting, with a screenshot.
+**The badge does not appear.** Check that **AI chat apps** is on in Settings, General, and that you are in one of the apps listed above. The badge only shows once there is text in the box, and in a terminal only when an AI CLI is running.
 
 **Step 2 is unavailable.** The model is not on your device. Open Settings, AI and download it, about 1 GB.
-
-**It feels slow the first time you shorten something.** The model loads into memory on first use, then stays warm.
-
-**Windows warns you about the app.** The Microsoft Store build is the safe path. A warning on a directly downloaded installer is Windows SmartScreen reacting to an unsigned file, not to anything wrong with your machine.
 
 **Something else.** `%LOCALAPPDATA%\Comprsly\debug.log` records what Comprsly is doing and is the fastest way to see what went wrong.
 
 Questions: [contact@comprsly.com](mailto:contact@comprsly.com)
+
+## License
+
+MIT, see [product/LICENSE](product/LICENSE).
