@@ -14,6 +14,14 @@ which nobody has been able to answer yet.
 
     python main_mac.py           watch and print what would be badged
     python main_mac.py --check   print a one shot diagnosis and exit
+
+The exit code of --check says which of three different things happened, so
+that a machine reading it cannot mistake one for another:
+
+    0   the Accessibility half works
+    2   macOS is withholding permission, which only a human at the Mac can give
+    3   pyobjc is not installed, so the build itself is wrong
+    1   something unexpected
 """
 
 import sys
@@ -52,7 +60,7 @@ def diagnose():
     if not platform_mac.available():
         print("  pyobjc is not installed, so nothing below can work.")
         print("  Fix: pip install -r ../build/requirements-mac.txt")
-        return 1
+        return 3
     print("  pyobjc: installed")
 
     if not accessibility.permission_granted():
@@ -62,7 +70,7 @@ def diagnose():
         print("  it, and there is no way to grant it from code.")
         print("  Fix: System Settings, Privacy and Security, Accessibility,")
         print("  then add whatever is running this (Terminal, or Comprsly.app).")
-        return 1
+        return 2
     print("  Accessibility permission: granted")
 
     front = accessibility.frontmost()
@@ -98,7 +106,7 @@ def watch():
     configure_storage()
     if not accessibility.permission_granted():
         print("Accessibility permission is off; run with --check for how to fix it.")
-        return 1
+        return 2
     print("Watching. Ctrl+C to stop.\n")
     last = None
     try:
