@@ -14,6 +14,7 @@ name: macOS
 #
 # macos-latest is free for public repositories.
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [sandbox, main]
@@ -119,9 +120,69 @@ jobs:
             --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
             --password "$APPLE_APP_PASSWORD" --wait
           xcrun stapler staple dist/Comprsly.app
+      # upload-artifact zips what it is handed and preserves neither the
+      # executable bit nor the symlinks inside Comprsly.app, so a downloaded
+      # bundle will not launch. tar keeps both, and the smoke job below needs
+      # this one to actually run.
+      - name: Pack the .app
+        working-directory: product/build
+        run: tar -czf Comprsly-mac.tar.gz -C dist Comprsly.app
       - name: Keep the build
         uses: actions/upload-artifact@v4
         with:
           name: Comprsly-mac
-          path: product/build/dist/Comprsly.app
+          path: product/build/Comprsly-mac.tar.gz
+          if-no-files-found: error
+
+  # Antonio wants to see the Mac app behave before paying to rent a Mac. This
+  # drives it on the only Mac available and uploads the report and the
+  # screenshots.
+  #
+  # The honesty rule lives in product/tools/mac_smoke.py: a permission macOS
+  # refused is recorded as BLOCKED, never as a pass, and told apart from a
+  # build that is genuinely broken, which is FAILED. Expect BLOCKED verdicts
+  # here. Accessibility cannot be granted from code at all: there is no API,
+  # tccutil only resets, and the only thing that works is writing rows into
+  # the system TCC database, which Apple calls unsupported and which is not
+  # worth doing to make a CI run look greener than the product is.
+  #
+  # Not on pull requests, because it is slow and a runner minute spent on
+  # every PR buys nothing. Run it by hand from the Actions tab any time.
+  smoke:
+    runs-on: macos-latest
+    needs: build
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/sandbox')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the Mac dependencies
+        working-directory: product/build
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-mac.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: Comprsly-mac
+          path: product/build
+      - name: Unpack the .app
+        working-directory: product/build
+        run: |
+          mkdir -p dist
+          tar -xzf Comprsly-mac.tar.gz -C dist
+          ls -la dist/Comprsly.app/Contents/MacOS
+      - name: Run it, watch it, write down what happened
+        working-directory: product/tools
+        run: python mac_smoke.py --app ../build/dist/Comprsly.app --out "$RUNNER_TEMP/smoke"
+      # if: always(), because the most informative run is the one that went
+      # wrong, and the report is the only record of why.
+      - name: Keep the report and the screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke
+          path: ${{ runner.temp }}/smoke
           if-no-files-found: error
