@@ -15,8 +15,21 @@ APP_NAME = "Comprsly"
 
 
 def support_dir():
-    """~/Library/Application Support/Comprsly, created if missing."""
-    base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_NAME)
+    """~/Library/Application Support/Comprsly. Does not create it.
+
+    It used to call makedirs, which meant merely asking where the files go
+    created the folder. Harmless on a Mac, where the app wants it anyway, but
+    the Windows test run asks too, and there it was quietly building a bogus
+    ~/Library/Application Support/Comprsly in the user's home. Creating is now
+    a separate thing you have to ask for.
+    """
+    return os.path.join(os.path.expanduser("~"), "Library",
+                        "Application Support", APP_NAME)
+
+
+def ensure_support_dir():
+    """Create the support directory and return it. Called once at startup."""
+    base = support_dir()
     os.makedirs(base, exist_ok=True)
     return base
 

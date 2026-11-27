@@ -18,6 +18,15 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# main.py calls ctypes.windll at import and the suite now runs on macos-latest
+# too, where that attribute does not exist. These tests are about the Windows
+# layer and there is nothing for them to assert on a Mac, so the whole module
+# steps aside rather than erroring. The windows-latest job in checks.yml runs
+# them on every pull request, and test_workflows.py pins that job so this skip
+# cannot quietly become permanent.
+if sys.platform != "win32":
+    raise unittest.SkipTest("the Windows layer; see the windows-latest job")
+
 import uiautomation as auto
 
 import main as app
