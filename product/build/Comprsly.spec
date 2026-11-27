@@ -21,12 +21,14 @@ _cl_d, _cl_b, _cl_h = collect_all('clr_loader')
 a = Analysis(
     ['../backend/main.py'],
     pathex=['../backend'],
+    # engine/ is imported by main.py; name it so the frozen build keeps it.
+
     binaries=[(os.path.join(_uia_bin_dir, 'UIAutomationClient_VC140_X64.dll'), 'uiautomation/bin'), (os.path.join(_uia_bin_dir, 'UIAutomationClient_VC140_X86.dll'), 'uiautomation/bin')] + _wv_b + _pn_b + _cl_b,
     datas=[('../frontend/assets', 'assets'), ('../frontend/webui', 'webui')] + _wv_d + _pn_d + _cl_d,
     # winspell drives the Windows spell-check COM API through comtypes.
     # Naming these explicitly stops PyInstaller silently omitting parts of
     # comtypes, which is what disabled spelling in the packaged build.
-    hiddenimports=['comtypes', 'comtypes.automation', 'comtypes._post_coinit', 'winspell',
+    hiddenimports=['engine', 'engine.geometry', 'engine.storage', 'comtypes', 'comtypes.automation', 'comtypes._post_coinit', 'winspell',
                    'webui', 'clr', 'webview', 'webview.platforms.edgechromium'] + _wv_h + _pn_h + _cl_h,
     hookspath=[],
     hooksconfig={},

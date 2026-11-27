@@ -59,6 +59,30 @@ except Exception as _uia_e:  # pragma: no cover - only trips on a broken host
     PatternId = None
     _UIA_IMPORT_ERROR = str(_uia_e)
 
+# The portable core, split out 2026-11-26 for the macOS build. These were
+# defined here; they are imported back under their original names so every
+# call site in this file is untouched, and so is the behaviour.
+from engine import geometry as _geometry
+from engine.geometry import _SimpleRect, _pane_bottom_row
+from engine.storage import (
+    _write_json_atomically, load_settings, save_settings,
+    load_history, append_history, save_badge_position,
+)
+import engine.storage as _storage
+
+
+def _badge_inset_for(app_label):
+    """Kept at its original name and signature so no call site changed. The
+    maths is in engine/geometry.py; the two numbers are DPI scaled, which is an
+    operating system concept, so they are supplied from here."""
+    return _geometry._badge_inset_for(
+        app_label, BADGE_INSIDE_INSET, BADGE_INSIDE_INSET_OVERRIDES)
+
+
+def _heat_color(count):
+    """Same arrangement as _badge_inset_for above."""
+    return _geometry._heat_color(count, BADGE_HEAT_MAX)
+
 import local_model
 import suggestion_engine
 from suggestion_engine import estimate_tokens
@@ -619,14 +643,6 @@ BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 APP_VERSION = "1.1.1"
 
 
-def _heat_color(count):
-    """Green (clean) -> red (lots to fix), through yellow/orange. Uses HSV
-    hue 120deg->0deg so it passes through natural yellow/orange rather than
-    the muddy brown a straight green->red RGB blend would give."""
-    t = min(count / BADGE_HEAT_MAX, 1.0) if BADGE_HEAT_MAX > 0 else 0.0
-    hue = (120.0 - 120.0 * t) / 360.0  # 120=green, 0=red
-    r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 0.88)
-    return (int(r * 255), int(g * 255), int(b * 255), 255)
 
 
 def _load_logo_image(size):
@@ -979,41 +995,8 @@ def load_saved_badge_position():
     return x, y
 
 
-def _write_json_atomically(path, data):
-    """Write JSON so a crash can never leave a half written or empty file.
-
-    `open(path, "w")` truncates the real file the instant it is called, before
-    a single byte of the new content is written. Kill the process in that gap,
-    which for a tray app people close by hand is not a rare event, and the file
-    is left empty. Every loader here catches the error and quietly returns a
-    default, so the symptom is settings resetting themselves or a whole
-    history of token savings vanishing, with nothing in the log.
-
-    Writing beside the file and renaming over it closes that gap: os.replace is
-    atomic on Windows and on POSIX, so a reader sees either the old file or the
-    new one, never a torn one. Same approach the log rotation here already
-    uses. Returns True when the data is safely on disk.
-    """
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        tmp = "%s.tmp%d" % (path, os.getpid())
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-        return True
-    except Exception:
-        # Best effort cleanup; a stray .tmp is harmless, a crash here is not.
-        try:
-            os.remove(tmp)
-        except Exception:
-            pass
-        return False
 
 
-def save_badge_position(x, y):
-    _write_json_atomically(BADGE_POSITION_PATH, {"x": x, "y": y})
 
 
 # Real ask 2026-07-20: a real settings window (Handy's own settings UI was
@@ -1056,6 +1039,17 @@ DEFAULT_SETTINGS = {
     # existed; either way that's not a real update to announce.
     "last_seen_version": "",
 }
+# engine/storage.py holds the atomic write and the loaders, but not where the
+# files live: that is the platform's business. Wire it up here, once, as soon
+# as all six values exist and before anything reads a setting.
+_storage.configure(
+    log_dir=LOG_DIR,
+    settings_path=SETTINGS_PATH,
+    history_path=HISTORY_PATH,
+    badge_position_path=BADGE_POSITION_PATH,
+    default_settings=DEFAULT_SETTINGS,
+    history_max_entries=HISTORY_MAX_ENTRIES,
+)
 
 # --- Where Comprsly works (2026-07-25: LLM-only, reversing the earlier
 # per-app-category system) -------------------------------------------------
@@ -1082,20 +1076,8 @@ CATEGORY_BLURB = {
 }
 
 
-def load_settings():
-    merged = dict(DEFAULT_SETTINGS)
-    data = {}
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
-    except Exception:
-        data = {}
-    return merged
 
 
-def save_settings(settings):
-    _write_json_atomically(SETTINGS_PATH, settings)
 
 
 def consume_version_update_flag():
@@ -1123,23 +1105,8 @@ def consume_version_update_flag():
     return {"updated": False}
 
 
-def load_history():
-    try:
-        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
 
 
-def append_history(entry):
-    history = load_history()
-    history.append(entry)
-    history = history[-HISTORY_MAX_ENTRIES:]
-    # Rewrites all HISTORY_MAX_ENTRIES rows every time, which is fine at this
-    # size and is why the atomic write matters: the blast radius of a torn
-    # write here is the whole history, not one row.
-    _write_json_atomically(HISTORY_PATH, history)
 
 
 # Real ask 2026-07-20: launch-on-login via the standard per-user Registry
@@ -2436,53 +2403,6 @@ def _vscode_terminal_pane_rect(control):
     return None
 
 
-# Terminal badge rule (2026-11-25, Antonio, by name): on every terminal the
-# badge sits at the RIGHT END OF THE INPUT LINE, inside the pane, and never on
-# top of typed text. Measured from the live log first: in VS Code the focused
-# control is the 11 px wide caret, and _position_for treats anything under
-# 100 px wide as "dock just LEFT of it", so the badge rode on top of the text
-# the user had just typed. _vscode_terminal_pane_rect existed for exactly this
-# and was never called.
-#
-# REWRITTEN 2026-11-26 after Antonio's screenshot. Putting the badge on the
-# caret's own line and then checking whether text had reached it was the wrong
-# shape of fix: the badge is 38 px and a terminal line is 17, so it bled a line
-# up and a line down whatever column it was in, and it sat on a word on the
-# line above. Both of that day's screenshots are that, not a column error.
-#
-# The row ONE LINE BELOW the caret is the input box's bottom border. In every
-# CLI that draws a box you type on the last line, so that row is decoration and
-# can never hold text. Aim there and the collision question stops existing:
-# nothing to detect, nothing to dodge, nothing to get wrong by a few pixels. It
-# is a fixed offset from the caret rather than a check that flips, so the badge
-# also stops hopping, which is the other half of what he reported.
-#
-# The badge is drawn at the line's own height (see PersistentBadge._size) so it
-# fits that row exactly.
-def _pane_bottom_row(left, right, pane_bottom, line_h):
-    """The last row of the terminal pane, docked right.
-
-    REWRITTEN AGAIN 2026-11-26, third attempt, and this time against the only
-    complaint Antonio has actually repeated: "why can't it just stay in one
-    place", and "can it sit below the terminal lines".
-
-    The first two attempts both tied the badge to the CARET's line, once
-    directly and once one row below it. Both move, because the caret moves:
-    every wrap, every newline, every time the input box grows, the badge jumps
-    with it. Dropping a row made it collide less, it did not make it hold
-    still, so it never addressed what he was asking for.
-
-    The pane's own bottom row does not move while you type. The input box
-    grows upward from it, the caret travels around above it, and this row
-    stays exactly where it is for as long as the window is that size. It is
-    also below every line of input, which is literally what he asked for, and
-    the one row no typed text ever reaches, so the collision question stays
-    closed.
-
-    The only thing that lives on this row is the CLI's own status line, which
-    is short and left aligned, so the right end of it is empty.
-    """
-    return _SimpleRect(left, pane_bottom - line_h, right, pane_bottom)
 
 
 def _terminal_badge_rect(control, process_name, hwnd, caret_rect, app_label):
@@ -2627,9 +2547,6 @@ def get_foreground_window_and_process():
     return hwnd, _process_name_for_hwnd(hwnd)
 
 
-class _SimpleRect:
-    def __init__(self, left, top, right, bottom):
-        self.left, self.top, self.right, self.bottom = left, top, right, bottom
 
 
 class GUITHREADINFO(ctypes.Structure):
@@ -5044,16 +4961,6 @@ BADGE_INSIDE_INSET = S(16)
 BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56)}
 
 
-def _badge_inset_for(app_label):
-    """Distance from the box's right edge to the badge's right edge.
-
-    One source of truth, because two places need the same number: _position_for
-    puts the badge there, and _terminal_badge_rect has to know which column it
-    landed in to keep typed text out from under it. Those two drifted apart on
-    the first pass (the terminal one left the override out) and let Claude Code
-    type about seven characters under its own badge.
-    """
-    return BADGE_INSIDE_INSET + BADGE_INSIDE_INSET_OVERRIDES.get(app_label, 0)
 
 # Gap between the badge's right edge and the real toolbar control it's
 # docking against once _toolbar_cluster_left finds one (2026-07-30). Small
