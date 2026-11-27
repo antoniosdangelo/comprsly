@@ -52,6 +52,12 @@ jobs:
   build:
     runs-on: macos-latest
     needs: test
+    # The signing gate lives here, not in the steps below, because a step
+    # `if` can read the env context but NOT the secrets context. Referencing
+    # secrets in an `if` is a workflow validation error, which GitHub reports
+    # by failing the whole run in 0s with no jobs and no log.
+    env:
+      DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -93,17 +99,15 @@ jobs:
       # to open it and the user has to right click, Open, and confirm. That is
       # a real install step to document, not a bug.
       - name: Sign the app
-        if: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+        if: env.DEVELOPER_ID != ''
         working-directory: product/build
-        env:
-          DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
         run: |
           codesign --force --deep --options runtime --timestamp \
             --entitlements Comprsly.entitlements \
             --sign "$DEVELOPER_ID" dist/Comprsly.app
           codesign --verify --deep --strict --verbose=2 dist/Comprsly.app
       - name: Notarise and staple
-        if: ${{ secrets.APPLE_DEVELOPER_ID != '' }}
+        if: env.DEVELOPER_ID != ''
         working-directory: product/build
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
