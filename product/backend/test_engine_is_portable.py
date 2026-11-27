@@ -99,6 +99,8 @@ class TheGeometryStillBehaves(unittest.TestCase):
         from engine.geometry import _heat_color
         self.assertEqual(len(_heat_color(3, 0)), 4)
 
+    @unittest.skipUnless(sys.platform == "win32",
+                         "main.py calls ctypes.windll at import; Windows only")
     def test_the_windows_layer_still_calls_them_the_old_way(self):
         """main.py keeps the original one argument signatures, so no call site
         in those 11,700 lines had to change."""

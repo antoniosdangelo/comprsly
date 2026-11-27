@@ -41,6 +41,7 @@ TEXT_ROLES = {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"}
 
 def configure_storage():
     """Point the shared engine at the macOS locations."""
+    paths.ensure_support_dir()      # the one place that may create it
     p = paths.storage_paths()
     storage.configure(
         log_dir=p["log_dir"],
