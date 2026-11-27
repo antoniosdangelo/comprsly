@@ -6,14 +6,14 @@ Grammarly for token efficiency. A Windows desktop app that watches whatever text
 
 One line for a stranger: "It's Grammarly, but instead of just fixing your grammar it also shrinks your prompt so you burn fewer tokens and less context window, all running locally on your machine."
 
-## Current state, as of 2026-07-28 (check `Build.md`'s top section before trusting this for anything time-sensitive, it moves fast)
+## Current state, as of 2026-11-27 (check the repo's `README.md` before trusting this for anything time-sensitive)
 
-- Windows desktop app: built, working, deployed, now at version 1.0.0. Lead and primary shipped product.
-- Website: comprsly.com, live, running on Cloudflare Workers.
+- Windows desktop app: version **1.1.1**, **live in the Microsoft Store** and free, no account. Store ID `9N8W5HPJ4DHV`, no pending submission, checked 2026-11-27 with the `msstore` CLI. This is the shipped product.
+- Website: comprsly.com, live, running on Cloudflare Workers, in its own private repo.
 - Email: contact@comprsly.com working.
-- GitHub repo: github.com/antoniosdangelo/comprsly, MIT licensed, confirmed **private**. Visibility is still Antonio's own open decision, don't assume either way when pitching an "open source" angle.
-- **Microsoft Store: submitted, currently In Certification** (Partner Center's own estimate: usually a few hours, up to 3 business days). Store ID `9N8W5HPJ4DHV`. This is no longer "close but blocked", it's actually in Microsoft's review queue — check current status before promoting a specific launch date, it may have passed and gone live, or it may still be pending. No code-signing cost was needed: the Store signs the app automatically and for free on publish.
-- Code signing for the *direct-download* .exe/.msix path (separate from the Store) is still unresolved — that download is unsigned and will trigger Windows SmartScreen warnings for anyone who gets it outside the Store. Given the Store submission is already in motion, the likely right sequencing is to point cold-traffic promotion at the Store listing once it's live, rather than a direct download link, until direct-download signing is separately resolved.
+- GitHub repo: github.com/antoniosdangelo/comprsly, MIT licensed, now **public**, and product only. An "open source" angle is available if Antonio wants it; ask rather than assume he wants it used.
+- **macOS: built and in testing, not released.** No download, no listing, no date. Do not promote it or imply it is coming on a timeline.
+- Code signing for the *direct-download* .exe/.msix path (separate from the Store) is still unresolved, so that download is unsigned and trips Windows SmartScreen. The Store signs the app automatically and for free, so cold traffic should go to the Store listing, not a direct download.
 
 ## Who it's for
 
@@ -31,9 +31,9 @@ Free to start, locked decision. Zero hosting cost removes the usual pressure to 
 
 Help figure out marketing and promotion for a bootstrapped, no-budget, developer-facing tool: which channels are worth it (developer communities, Reddit, Product Hunt, Hacker News, X/dev Twitter, YouTube reviewers who cover AI tooling, etc), what the launch sequence should look like, what messaging lands with the specific audience above, and anything else that falls under getting Comprsly in front of the people who'd actually want it.
 
-Before proposing anything concrete, read `Overview.md` in this same folder (`Ventures/Comprsly/Overview.md`) for the full business thesis and competitive research, and skim `Build.md`'s top section for current technical state. Don't assume or invent product details not already established there, ask Antonio if something's unclear rather than guessing.
+Before proposing anything concrete, read `Overview.md` in this same folder for the business thesis and competitive research, and skim `Build.md`'s CURRENT STATE block for the real technical state. Both are in `docs/` in the product repo. Don't assume or invent product details not already established there, ask Antonio if something's unclear rather than guessing.
 
-Known constraint worth weighing into any plan: the unsigned .exe / no Store listing situation above means a cold download link is currently a worse first impression than it will be once the Store listing goes live and starts signing the app for free. That's close (blocked on a package upload and one checkbox click, not new work), so it's a real sequencing question whether to hold hard distribution pushes until the Store listing is live, versus starting to build awareness now and pointing people to the Store once it's ready.
+Known constraint worth weighing into any plan: the Store listing is live and signed, so it is the right destination for cold traffic. A direct download is still unsigned and still trips SmartScreen, which is a worse first impression, so avoid linking it until direct-download signing is sorted. That sequencing question is settled now, unlike when this file was first written.
 
 ## Antonio's UGC video script idea (noted 2026-07-29, from the build/website-side chat, not yet developed further)
 

@@ -6,25 +6,26 @@ setup, the Worker, DNS, Email Routing and the Resend relay, moved to `docs/Build
 in the private comprsly-website repo on 2026-11-26.
 
 
-> ## CURRENT STATE, refreshed 2026-11-22 (read this before anything below it)
+> ## CURRENT STATE, refreshed 2026-11-27 (read this before anything below it)
 >
-> **Source version is `APP_VERSION = "1.0.67"`** in `product/backend/main.py`, read straight from the file. Every "1.0.0" and "0.9.x" claim below is stale history from July, including the Status line immediately after this block. The badge positioning marathon of 2026-08-03 is what carried the version from ~1.0.22 to 1.0.67, and that work is complete and confirmed across ChatGPT, Claude (including Claude Code), Gemini (including the Chrome side panel), Perplexity, Grok, Copilot and DeepSeek.
+> **Source version is `APP_VERSION = "1.1.1"`** in `product/backend/main.py`, read straight from the file, and `version_info.txt`, `installer.iss`, both PyInstaller specs and the MSIX template all agree with it. Every "1.0.x" and "0.9.x" claim below is stale history, including the Status line immediately after this block.
 >
-> **Everything now lives in one repo at `C:\Dev\Claude Code\Projects\Comprsly`** (reorganized 2026-11-21). Path translation for every stale reference below:
+> **The Microsoft Store has 1.1.1.** Checked 2026-11-27 with the `msstore` CLI: last published package `ComprslyStore-1.1.1.msix` (1.1.1.0), status Published, and no pending submission. The Store and `main` are on the same version, so nothing is sitting in a queue. Everything below about 1.0.1.0, 1.0.3.0 and a draft "Submission 2" is history.
+>
+> **What shipped in 1.1.1**, none of which is described below: Codex CLI, Gemini CLI and Copilot CLI detection, the integrated terminal in VS Code, Cursor and Windsurf, and the macOS platform layer. The Mac version is built and in testing, with no release and no download; see `product/frontend/MACOS_UI.md` for what has to be looked at on a real Mac first.
+>
+> **This repo is the product only**, at `C:\Dev\Claude Code\Projects\Comprsly\comprsly`, reorganized 2026-11-21 and split from the website on 2026-11-26. Path translation for every stale reference below:
 >
 > | This file says | It is now |
 > |---|---|
-> | `Ventures/Comprsly/` | `Projects/Comprsly/` |
-> | `Ventures/Comprsly/website/` | `website/backend/` (the Worker) plus `website/frontend/public/` (the pages) |
+> | `Ventures/Comprsly/` | `Projects/Comprsly/comprsly/` |
+> | `desktop/`, or `product/` holding the app directly | `product/backend/` (the engine and the tests), `product/frontend/` (the screens and icons), `product/build/` (packaging) |
+> | `Ventures/Comprsly/website/`, `extension/`, `terminal/` | not in this repo at all. The site is in the private `comprsly-website` repo; the extension and the terminal wrapper were dormant and were not carried over |
 > | `Ventures/Comprsly/Build.md` | `docs/Build.md` |
 > | project root `*.md` and `*prompt.md` | `docs/` |
-> | `tools_unpack_artifact_bundle.py` | `tools/` |
+> | `tools_*.py` | `product/tools/`. There is no root `tools/` folder |
 >
-> Deploy is now `npx wrangler deploy` from `website/backend/`, from `main` only, and only after Antonio types "deploy". Branch rules are in `BRANCHING.md`, agent ownership in `AGENTS.md`, plain language change history in `CHANGELOG.md`.
->
-> **Microsoft Store status is NOT verified by this refresh.** The last real Partner Center check was 2026-07-30 (§10z): Submission 1 live in the Store, Submission 2 back in draft waiting on a new debugged MSIX. Nearly four months have passed with no check. Verify in Partner Center directly before acting on any Store claim in this file.
->
-> **One known copy bug, fixed in the repo on 2026-11-22 but NOT yet deployed:** comprsly.com's terminal section claimed you switch Windows Terminal, PowerShell and your Git client on individually in Settings. No such toggles exist. `APP_CATEGORIES = ("ai_chat",)` is the only one, and terminal support is detected automatically via `TERMINAL_HOST_PROCESSES`. Branch `frontend/terminal-copy`. The live site still serves the wrong line until a deploy.
+> Branch rules are in `BRANCHING.md`, agent ownership in `AGENTS.md`, plain language change history in `CHANGELOG.md`. Nothing in this repo deploys the website any more, so the `npx wrangler deploy` instructions below apply to the other repo.
 
 **Last updated:** 2026-07-30 (website/Store-submission-side session). **This update (§10z): the v1.0.1.0 submission described in §10y as "In Certification" has since PASSED and is now confirmed LIVE in the Microsoft Store** (verified directly via Partner Center at the start of this session — "In Microsoft Store" badge, read-only "Store presence" section — not assumed from any recap). **This session then built and submitted a second, listing-only update ("Submission 2"): a new interactive Store trailer video, 5 new screenshots, and a required 16:9 hero image, replacing the app's original 6 screenshots — submitted, then CANCELED by Antonio the same day** to bundle in a new, freshly-debugged MSIX package rather than ship two separate certification cycles back to back. Submission 2 is back in **draft**, all listing assets preserved, waiting on a new package upload. Full detail in §10z. **Lesson repeated again, still true: always verify current version/state directly from files (or Partner Center itself) before trusting a recap, including this one.**
 **Status:** Source version is still **1.0.0** (`main.py APP_VERSION`) / packaged as **v1.0.1.0** — unchanged by this session, no code work happened here. **Submission 1 (v1.0.1.0) is live in the Microsoft Store.** **Submission 2 (new screenshots, trailer, thumbnail, hero art) is back in Draft**, canceled from certification 2026-07-30 specifically so a new debugged package can be bundled into the same submission before resubmitting. See §10z for the full build/upload record and RESUME POINT item 6 (rewritten again) for exact current state.
