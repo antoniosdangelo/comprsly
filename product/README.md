@@ -24,7 +24,7 @@ python backend/main.py
 
 Tests: `python -m unittest discover -s backend -p "test_*.py"`.
 
-The installer is PyInstaller (`build/Comprsly.spec`) plus Inno Setup (`build/installer.iss`); `build/Comprsly-mac.spec` makes the `.app`. Full instructions, including the Store package, are in `../docs/Build.md`.
+The installer is PyInstaller (`build/Comprsly.spec`) plus Inno Setup (`build/installer.iss`); `build/Comprsly-mac.spec` makes the `.app`. Full instructions are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Installing a release build is covered in `SETUP-README.txt`. Everything else, including versions, what Comprsly recognizes and how to build it, is in the repo's main [README](../README.md).
 
