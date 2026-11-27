@@ -1,0 +1,41 @@
+r"""Where Comprsly keeps its files on a Mac.
+
+Windows uses %LOCALAPPDATA%\Comprsly. The macOS convention for an app's own
+support files is ~/Library/Application Support/<App>, and for a .app bundle
+distributed outside the App Store that directory is writable without any
+entitlement, which is why it is used rather than a sandbox container.
+
+engine/storage.py takes these through configure(), so nothing in the shared
+engine ever learns an operating system's folder layout.
+"""
+
+import os
+
+APP_NAME = "Comprsly"
+
+
+def support_dir():
+    """~/Library/Application Support/Comprsly, created if missing."""
+    base = os.path.join(os.path.expanduser("~"), "Library", "Application Support", APP_NAME)
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def storage_paths():
+    """The five values engine.storage.configure wants, macOS flavoured."""
+    d = support_dir()
+    return {
+        "log_dir": d,
+        "settings_path": os.path.join(d, "settings.json"),
+        "history_path": os.path.join(d, "history.json"),
+        "badge_position_path": os.path.join(d, "badge_position.json"),
+    }
+
+
+def log_path():
+    return os.path.join(support_dir(), "debug.log")
+
+
+def model_dir():
+    """The local model, same relative place as on Windows."""
+    return os.path.join(support_dir(), "model", "qwen2.5-1.5b-instruct-int4-cpu")

@@ -1,0 +1,13 @@
+# macOS dependencies. Deliberately NOT requirements.txt: that one pulls
+# uiautomation, comtypes, pythonnet and pywebview, which are Windows only and
+# will not install here.
+#
+# Only the pyobjc pieces the platform_mac layer actually imports, not the whole
+# pyobjc umbrella, which is around 40 packages and most of a gigabyte.
+pyobjc-core==11.1
+pyobjc-framework-Cocoa==11.1          # AppKit: NSWorkspace, NSPasteboard
+pyobjc-framework-Quartz==11.1         # CGEventTap, synthetic keystrokes
+pyobjc-framework-ApplicationServices==11.1   # AXUIElement, the Accessibility API
+
+# Shared with Windows: the local model and the rules engine need these.
+onnxruntime-genai==0.9.2
