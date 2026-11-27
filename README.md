@@ -4,17 +4,21 @@ Comprsly fixes your spelling and grammar as you type in AI chats, then optionall
 
 Website: [comprsly.com](https://comprsly.com) · Microsoft Store: [Get Comprsly](https://apps.microsoft.com/detail/9N8W5HPJ4DHV)
 
-**Versions.** The Microsoft Store has 1.0.3.0. This repo's `main` is 1.1.0, which adds Codex CLI, Gemini CLI and Copilot CLI detection, and goes to the Store next. Until then, those three CLIs work only in a build from source.
+**Versions.** The Microsoft Store has **1.1.1**, the same version this repo is on, in both `main` and `sandbox`. 1.1.1 is what added Codex CLI, Gemini CLI and Copilot CLI detection, and the integrated terminal in VS Code, Cursor and Windsurf.
+
+**Platforms.** Windows is the only released platform. A macOS version is built and in testing, with no release and no download, see section 7.
 
 ## 1. What you need
 
-**Windows 10 or Windows 11.** There is no Mac or Linux version yet, because Comprsly reads Windows text fields directly.
+**Windows 10 or Windows 11.** Comprsly reads Windows text fields directly, so this is what the shipped app runs on. There is no Linux version.
 
 **Fully tested AI chats:** Claude (including Claude Code), ChatGPT, Gemini (including the Chrome side panel), Perplexity, Copilot, Grok, DeepSeek.
 
 **Also recognized:** Le Chat, Poe, Hugging Face, You.com, Pi, Character.AI.
 
-**Terminals:** Windows Terminal, PowerShell, Command Prompt, Git Bash, WSL.
+**Terminals:** Windows Terminal, PowerShell, pwsh, Command Prompt, Git Bash, WSL, and the integrated terminal in VS Code, Cursor and Windsurf. VS Code was measured live; Cursor and Windsurf take the same code path but nobody has confirmed them yet.
+
+A terminal only wakes Comprsly up when an AI CLI is actually running in it, so a plain shell prompt stays untouched. The CLIs it finds: **Claude Code, Codex CLI, Copilot CLI, Gemini CLI.**
 
 It works in the browser and in desktop apps. Everywhere else it stays out of the way, by design.
 
@@ -47,7 +51,7 @@ Right click the Comprsly icon in the system tray and open Settings. There are fo
 | **History** | Your token savings for the last 7 days |
 | **About** | Version and links |
 
-**To stop Comprsly appearing anywhere** without uninstalling it, turn off **AI chat apps** on the General page.
+**To stop Comprsly appearing anywhere** without uninstalling it, turn off **AI chat apps** on the General page. It is the only such switch: there is no per app or per terminal toggle.
 
 **To keep spelling and grammar but drop the AI shortening**, turn off the toggle on the AI page. Spelling and grammar need no model and keep working.
 
@@ -68,27 +72,34 @@ Full policy: [comprsly.com/privacy](https://comprsly.com/privacy/)
 
 ## 6. Building from source
 
-The Windows app is Python and lives in `product/`.
+The app is Python and lives in `product/`.
 
 ```
-cd product/build
-pip install -r requirements.txt
-python main.py
+pip install -r product/build/requirements.txt
+python product/backend/main.py
 ```
 
-Building the installer and the Microsoft Store package is covered in `docs/Build.md`.
+The tests:
+
+```
+python -m unittest discover -s product/backend -p "test_*.py"
+```
+
+That is the same command CI runs, on a Windows runner, because `main.py` reaches for a Windows API as it imports. Building the installer and the Microsoft Store package is covered in `docs/Build.md`.
 
 ### What is in this repo
 
 | Folder | What it is | Built with |
 |---|---|---|
-| `product/` | **The Windows app, the main product** | Python |
-| `product/backend/` | Its engine: detection, grammar, the local model | Python |
+| `product/` | **The app, the main product** | Python |
+| `product/backend/` | Its engine: detection, grammar, the local model, and the tests | Python |
+| `product/backend/engine/` | The part that is the same on every platform: geometry and storage | Python |
+| `product/backend/platform_mac/` | The macOS platform layer, the sibling of `main.py` | Python |
 | `product/frontend/` | What you see: the settings and review screens, icons | HTML, CSS |
-| `product/build/` | Packaging: PyInstaller spec, Inno Setup, the Store manifest | |
+| `product/build/` | Packaging: the PyInstaller specs, Inno Setup, the Store manifest | |
 | `product/tools/` | Dev only scripts, never shipped | Python |
-| `docs/` | How to install, use and build the app | |
-| `tools/` | One off helper scripts | Python |
+| `docs/` | How to build and release it, and what it recognizes | |
+| `.github/workflows/` | Compile, tests and secret scan on every PR, plus the Windows and macOS builds | |
 
 ### First time on a new machine
 
@@ -99,17 +110,29 @@ Building the installer and the Microsoft Store package is covered in `docs/Build
 
 ### Branches
 
-`main` is tested code. `sandbox` is where new work goes first. Work branches are named `product/...`, `ci/...` or `docs/...`.
+`main` is tested code. `sandbox` is where new work goes first. Work branches are one per side, `backend/...` or `frontend/...`, merged into `sandbox` and then deleted. Full rules in `BRANCHING.md`.
 
-The comprsly.com site is **not in this repo.** It lives in a separate private repo, `comprsly-website`, along with its Cloudflare Worker, its analytics and its contact relay. Full rules in `BRANCHING.md`. Every change is explained in `CHANGELOG.md`.
+The comprsly.com site is **not in this repo.** It lives in a separate private repo, `comprsly-website`, along with its Cloudflare Worker, its analytics and its contact relay. Every change here is explained in `CHANGELOG.md`.
 
 ### Not in this repo on purpose
 
-Secrets (`.env`), built installers, and the large videos in `docs/content`.
+Secrets (`.env`), built installers and packages, and the large videos in `docs/content`.
 
-## 7. Troubleshooting
+## 7. The Mac version
 
-**The badge does not appear.** Check that **AI chat apps** is on in Settings, General. Then check you are in a chat Comprsly recognizes, from the list above. The badge only shows once there is text in the box.
+**Built, in testing, not released.** There is no Mac download, no Mac listing, and no date. Do not read this section as an announcement.
+
+What exists today:
+
+- `product/backend/platform_mac/`, the macOS half of what `main.py` does on Windows: Accessibility, the frontmost app, the focused text box, the clipboard, the process tree, launch on login.
+- `product/backend/main_mac.py`, which watches and prints what it would badge. `python main_mac.py --check` gives a one shot diagnosis, and its exit code says whether Accessibility works, is being withheld, or whether the build is missing pyobjc.
+- `product/build/Comprsly-mac.spec` and `requirements-mac.txt`, which build a `Comprsly.app`. The macOS job in `.github/workflows/macos.yml` runs the shared engine and Mac layer tests, builds the app on a macOS runner and keeps it as an artifact. Signing and notarization are written but switched off until there is a Developer ID.
+
+What is not done: the badge and the review card are Tkinter, and the one thing that genuinely differs between the two platforms is making the badge's square window invisible around the circle. `product/frontend/MACOS_UI.md` explains it and names what has to be looked at on a real Mac first. Nobody has used Comprsly on a Mac yet.
+
+## 8. Troubleshooting
+
+**The badge does not appear.** Check that **AI chat apps** is on in Settings, General. Then check you are in a chat Comprsly recognizes, from the list above. The badge only shows once there is text in the box. In a terminal, it also needs an AI CLI to actually be running.
 
 **The badge is in the wrong place.** Positioning is measured per site. If it looks wrong on a site in the tested list, that is a bug worth reporting, with a screenshot.
 
