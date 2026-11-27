@@ -35,12 +35,14 @@ import traceback
 from datetime import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+# main.py lives in product/backend, not beside this file. Inserting HERE
+# instead was how all three of these tools died in the 2026-11-26 restructure.
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "backend"))
 
 try:
     import uiautomation as auto
 except ImportError:
-    sys.exit("uiautomation is missing. Run: pip install -r requirements.txt")
+    sys.exit("uiautomation is missing. Run: pip install -r ../build/requirements.txt")
 
 # main.py is import safe; its entry point sits behind a __main__ guard.
 import main as app
