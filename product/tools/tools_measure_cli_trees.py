@@ -20,7 +20,9 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+# main.py lives in product/backend, not beside this file. Inserting HERE
+# instead was how all three of these tools died in the 2026-11-26 restructure.
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), "backend"))
 
 import main as app
 
