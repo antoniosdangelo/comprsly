@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+# NOT a bare "build/". This file used to live at desktop/.gitignore, where
+# "build/" meant desktop/build, PyInstaller's scratch directory. Moved to
+# product/ in the 2026-11-26 restructure, it silently started ignoring
+# product/build, which is the PACKAGING SOURCE folder: the specs, the
+# installer script, the Store manifest. Files already tracked kept working,
+# so nothing looked wrong, and every NEW packaging file was dropped without
+# a word. Caught when the macOS spec would not add.
+build/build/
+build/dist/
+build/installer-output/
+dist/
+installer-output/
+*.log
+AutomationLog.txt
+.vs/

@@ -1,5 +1,14 @@
 name: Checks
-# Free checks on every pull request and on sandbox: code compiles, scripts parse, no secrets.
+# Every pull request and every push to sandbox: the tests run, the app
+# compiles, no secrets.
+#
+# The tests used to run only in deploy.yml, on a push to main, so a failing
+# test could never stop a merge, and the desktop tests ran nowhere at all.
+# They run here now.
+#
+# This repo is product only since 2026-11-26. The site and its Worker live in
+# the private comprsly-website repo, which carries its own checks and its own
+# deploy, so there is nothing Node or Cloudflare shaped left here.
 on:
   pull_request:
   push:
@@ -8,22 +17,36 @@ permissions:
   contents: read
   pull-requests: read
 jobs:
-  code:
+  compile:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - name: App compiles
+        run: python -m py_compile product/backend/*.py product/tools/*.py
+
+  # On Windows deliberately: main.py does `from ctypes import wintypes` at
+  # import time, which does not exist on Linux, so these cannot run on the
+  # ubuntu runner however they are invoked.
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: 22
-      - name: Desktop app compiles
-        run: python -m py_compile desktop/*.py
-      - name: Extension and terminal scripts parse
-        run: for f in extension/*.js terminal/*.js; do node --check "$f"; done
-      - name: Extension manifest is valid
-        run: python -c "import json; json.load(open('extension/manifest.json'))"
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: product/build/requirements.txt
+      # The same list the build job installs, rather than a second shorter one
+      # that would drift out of sync with it.
+      - name: Install dependencies
+        working-directory: product/build
+        run: pip install -r requirements.txt
+      - name: Desktop tests
+        run: python -m unittest discover -s product/backend -p "test_*.py" -v
+
   secrets:
     runs-on: ubuntu-latest
     steps:

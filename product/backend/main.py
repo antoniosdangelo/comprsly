@@ -59,6 +59,30 @@ except Exception as _uia_e:  # pragma: no cover - only trips on a broken host
     PatternId = None
     _UIA_IMPORT_ERROR = str(_uia_e)
 
+# The portable core, split out 2026-11-26 for the macOS build. These were
+# defined here; they are imported back under their original names so every
+# call site in this file is untouched, and so is the behaviour.
+from engine import geometry as _geometry
+from engine.geometry import _SimpleRect, _pane_bottom_row
+from engine.storage import (
+    _write_json_atomically, load_settings, save_settings,
+    load_history, append_history, save_badge_position,
+)
+import engine.storage as _storage
+
+
+def _badge_inset_for(app_label):
+    """Kept at its original name and signature so no call site changed. The
+    maths is in engine/geometry.py; the two numbers are DPI scaled, which is an
+    operating system concept, so they are supplied from here."""
+    return _geometry._badge_inset_for(
+        app_label, BADGE_INSIDE_INSET, BADGE_INSIDE_INSET_OVERRIDES)
+
+
+def _heat_color(count):
+    """Same arrangement as _badge_inset_for above."""
+    return _geometry._heat_color(count, BADGE_HEAT_MAX)
+
 import local_model
 import suggestion_engine
 from suggestion_engine import estimate_tokens
@@ -616,17 +640,9 @@ BADGE_HEAT_MAX = 6  # suggestion count at which the ring is fully red
 # Displayed in the settings status bar and About. MUST be bumped together
 # with version_info.txt and installer.iss (it drifted to a stale 0.9.4 while
 # those advanced, so the UI lied about the version -- 2026-07-22).
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 
-def _heat_color(count):
-    """Green (clean) -> red (lots to fix), through yellow/orange. Uses HSV
-    hue 120deg->0deg so it passes through natural yellow/orange rather than
-    the muddy brown a straight green->red RGB blend would give."""
-    t = min(count / BADGE_HEAT_MAX, 1.0) if BADGE_HEAT_MAX > 0 else 0.0
-    hue = (120.0 - 120.0 * t) / 360.0  # 120=green, 0=red
-    r, g, b = colorsys.hsv_to_rgb(hue, 0.85, 0.88)
-    return (int(r * 255), int(g * 255), int(b * 255), 255)
 
 
 def _load_logo_image(size):
@@ -807,11 +823,26 @@ def _hex_to_rgb(value):
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
+# product/ , the folder holding backend/, frontend/ and the shipped docs. Only
+# meaningful when running from source; a frozen build uses _MEIPASS and the
+# executable's own directory instead.
+PRODUCT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def resource_path(relative_path):
     """Bundled data files (the logo) live next to this script when running
     from source, but PyInstaller's --onefile bootloader extracts them into
     a temp _MEIPASS dir at runtime, this is the standard way to find either."""
-    base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    base_path = getattr(sys, "_MEIPASS", None)
+    if base_path is None:
+        # Running from source. assets/ and webui/ live in the sibling
+        # product/frontend folder since the 2026-11-26 layout change, so the
+        # base is one level up and across, NOT this file's own directory. The
+        # frozen build still finds them at the _MEIPASS root, because
+        # Comprsly.spec maps them back to plain "assets" and "webui" there.
+        # That is deliberate: every resource_path("assets/...") call site
+        # keeps working untouched in both modes.
+        base_path = os.path.join(PRODUCT_ROOT, "frontend")
     return os.path.join(base_path, relative_path)
 
 
@@ -824,10 +855,10 @@ def install_dir_path(relative_path):
     frozen build, only in a dev run. sys.executable's OWN directory is the
     real install dir when frozen (installer.iss's DefaultDirName places
     Comprsly.exe and ACKNOWLEDGEMENTS.txt side by side); running from
-    source, that file sits in this same desktop/ folder as main.py."""
+    source, that file sits at the product/ root, one level above this file."""
     base = (os.path.dirname(os.path.abspath(sys.executable))
             if getattr(sys, "frozen", False)
-            else os.path.dirname(os.path.abspath(__file__)))
+            else PRODUCT_ROOT)
     return os.path.join(base, relative_path)
 
 
@@ -964,13 +995,8 @@ def load_saved_badge_position():
     return x, y
 
 
-def save_badge_position(x, y):
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(BADGE_POSITION_PATH, "w", encoding="utf-8") as f:
-            json.dump({"x": x, "y": y}, f)
-    except Exception:
-        pass
+
+
 
 
 # Real ask 2026-07-20: a real settings window (Handy's own settings UI was
@@ -1013,6 +1039,17 @@ DEFAULT_SETTINGS = {
     # existed; either way that's not a real update to announce.
     "last_seen_version": "",
 }
+# engine/storage.py holds the atomic write and the loaders, but not where the
+# files live: that is the platform's business. Wire it up here, once, as soon
+# as all six values exist and before anything reads a setting.
+_storage.configure(
+    log_dir=LOG_DIR,
+    settings_path=SETTINGS_PATH,
+    history_path=HISTORY_PATH,
+    badge_position_path=BADGE_POSITION_PATH,
+    default_settings=DEFAULT_SETTINGS,
+    history_max_entries=HISTORY_MAX_ENTRIES,
+)
 
 # --- Where Comprsly works (2026-07-25: LLM-only, reversing the earlier
 # per-app-category system) -------------------------------------------------
@@ -1039,25 +1076,8 @@ CATEGORY_BLURB = {
 }
 
 
-def load_settings():
-    merged = dict(DEFAULT_SETTINGS)
-    data = {}
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        merged.update({k: v for k, v in data.items() if k in DEFAULT_SETTINGS})
-    except Exception:
-        data = {}
-    return merged
 
 
-def save_settings(settings):
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-            json.dump(settings, f)
-    except Exception:
-        pass
 
 
 def consume_version_update_flag():
@@ -1085,25 +1105,8 @@ def consume_version_update_flag():
     return {"updated": False}
 
 
-def load_history():
-    try:
-        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception:
-        return []
 
 
-def append_history(entry):
-    history = load_history()
-    history.append(entry)
-    history = history[-HISTORY_MAX_ENTRIES:]
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(history, f)
-    except Exception:
-        pass
 
 
 # Real ask 2026-07-20: launch-on-login via the standard per-user Registry
@@ -2400,6 +2403,39 @@ def _vscode_terminal_pane_rect(control):
     return None
 
 
+
+
+def _terminal_badge_rect(control, process_name, hwnd, caret_rect, app_label):
+    try:
+        if process_name in VSCODE_PROCESSES:
+            pane = _vscode_terminal_pane_rect(control)
+            if pane is None:
+                return None
+            line_h = max(1, caret_rect.bottom - caret_rect.top)
+            rect = _pane_bottom_row(pane.left, pane.right, pane.bottom, line_h)
+            rect.line_h = line_h
+            return rect
+        # Windows Terminal and the classic consoles: the control is the whole
+        # pane, so find the live input line from the CLI's own text.
+        get_tp = getattr(control, "GetTextPattern", None)
+        text_pattern = get_tp() if get_tp else None
+        if text_pattern is None:
+            return None
+        line = _find_terminal_input_line_rect(text_pattern, hwnd)
+        if line is None:
+            return None
+        line_h = max(1, line.bottom - line.top)
+        # caret_rect IS the whole pane for these hosts, so its bottom is the
+        # pane's bottom.
+        rect = _pane_bottom_row(caret_rect.left, caret_rect.right,
+                                caret_rect.bottom, line_h)
+        rect.line_h = line_h
+        return rect
+    except Exception as e:
+        log_exception(f"_terminal_badge_rect: {e!r}")
+        return None
+
+
 def app_label_for(process_name, hwnd):
     """Known-LLM label for whatever's in the foreground right now: by
     process name first (a real installed desktop app), then by browser tab
@@ -2511,9 +2547,6 @@ def get_foreground_window_and_process():
     return hwnd, _process_name_for_hwnd(hwnd)
 
 
-class _SimpleRect:
-    def __init__(self, left, top, right, bottom):
-        self.left, self.top, self.right, self.bottom = left, top, right, bottom
 
 
 class GUITHREADINFO(ctypes.Structure):
@@ -4427,11 +4460,18 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
         # was itself flagged as the likely cause of the visible double-jump
         # glitch. Repeating it here would also risk undoing the click that
         # just put the caret in the composer.
-        current_fg = ctypes.windll.user32.GetForegroundWindow()
-        log(
-            f"apply_new_text: about to send Ctrl+A/Ctrl+V, foreground now "
-            f"{_window_title(current_fg)}, focus_verified={focus_state}"
-        )
+        # Diagnostic only, so it must never be the thing that aborts an
+        # apply: _window_title reads the target window through UIA, which
+        # throws if that window has just gone away. Raising here used to skip
+        # the clipboard restore below entirely.
+        try:
+            current_fg = ctypes.windll.user32.GetForegroundWindow()
+            log(
+                f"apply_new_text: about to send Ctrl+A/Ctrl+V, foreground now "
+                f"{_window_title(current_fg)}, focus_verified={focus_state}"
+            )
+        except Exception:
+            log_exception("apply_new_text: foreground probe")
 
         # Mark our own synthetic keys so the hook doesn't mistake them for
         # dictation and flag the buffer untrusted (see _self_injecting).
@@ -4462,10 +4502,16 @@ def apply_new_text(root, popup, new_text, target_hwnd=None, dismiss_after=True,
                 time.sleep(0.05)  # small settle margin even in the worst case
         finally:
             _self_injecting[0] = False
-
-        # Put the user's own clipboard back (Win32 again, same reasoning),
-        # whatever format it held: text, image, files.
-        _restore_clipboard(original)
+            # Put the user's own clipboard back (Win32 again, same reasoning),
+            # whatever format it held: text, image, files.
+            #
+            # Moved INTO the finally 2026-11-26. It used to sit after this
+            # block, so anything that raised between putting our text on the
+            # clipboard and getting here left Comprsly's rewritten prompt
+            # sitting on the user's clipboard, and whatever they had copied,
+            # a screenshot or a set of files, gone with no message. On the
+            # normal path this runs at exactly the same moment it always did.
+            _restore_clipboard(original)
 
         # Real gap found 2026-07-20: the paste itself is a synthetic
         # keystroke, correctly ignored by the anti-self-trigger filter, so
@@ -4905,7 +4951,16 @@ BADGE_INSIDE_INSET = S(16)
 # terminal/CLI specifically -- see this file's permanently-scoped terminal
 # block further down for why a general "fix the badge" ask never
 # authorizes touching this constant on its own.
-BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56), "Claude Code": S(6 + DESIGN_BADGE_SIZE)}
+# "Claude Code" REMOVED 2026-11-26, by Antonio, by name, about the terminal
+# specifically, which is what this constant's own lock above requires. It held
+# a whole badge width plus 6 so the badge would clear the typed line. The badge
+# no longer sits on a typed line at all (see _terminal_badge_rect: it is on the
+# box's border row, where text cannot go), so the override now only buys an
+# arbitrary 64 px gap on one CLI out of four. He asked for the badge to "be the
+# same on all of them"; with this gone, it is.
+BADGE_INSIDE_INSET_OVERRIDES = {"ChatGPT": S(56)}
+
+
 
 # Gap between the badge's right edge and the real toolbar control it's
 # docking against once _toolbar_cluster_left finds one (2026-07-30). Small
@@ -6479,6 +6534,33 @@ class PersistentBadge:
         # separately -- popup_anchor picks this up for free since it reads
         # the same instance state show_near just set.
         self._current_app_label = None
+        # How big to draw the badge RIGHT NOW. Everywhere else in the app the
+        # badge is one fixed size, but a terminal row is about 17 px and the
+        # normal badge is 38, so a fixed badge can only ever cover the lines
+        # around it (Antonio, 2026-11-26, screenshot: it was sitting on a word
+        # on the line above). In a terminal this becomes the row's own height
+        # so the badge fits the row exactly. See _size_for_rect.
+        self._size = BADGE_ICON_SIZE
+
+    # Never shrink past this: below it the mark stops reading as the logo and
+    # gets fiddly to click. A row shorter than this is rare enough that
+    # overhanging a border row by a couple of pixels is the better trade.
+    MIN_SIZE = S(13)
+
+    def _size_for_rect(self, rect):
+        line_h = getattr(rect, "line_h", None)
+        if line_h is None:
+            return BADGE_ICON_SIZE
+        return max(self.MIN_SIZE, min(int(line_h), BADGE_ICON_SIZE))
+
+    def _apply_size(self, size):
+        """A size change has to rebuild the window: the image is baked, and
+        the label keeps the old one otherwise (same reason as
+        rebuild_for_scale, which this reuses rather than repeating)."""
+        if size == self._size:
+            return
+        self._size = size
+        self.rebuild_for_scale()
 
     def _ensure_window(self):
         if self.window is not None:
@@ -6511,7 +6593,7 @@ class PersistentBadge:
         # around the logo shows how much there is to compact/fix, redder =
         # more. Starts green. The image is regenerated in show_near when the
         # count changes.
-        icon_image = _make_heat_badge_image(BADGE_ICON_SIZE, 0)
+        icon_image = _make_heat_badge_image(self._size, 0)
         if icon_image is not None:
             self._icon_photo = ImageTk.PhotoImage(icon_image)
             icon = tk.Label(row, image=self._icon_photo, bg=BRAND_DARK, cursor="hand2")
@@ -6591,7 +6673,7 @@ class PersistentBadge:
         key = (count, checked)
         if key == self._last_heat_count or self._icon_label is None:
             return
-        img = _make_heat_badge_image(BADGE_ICON_SIZE, count, checked=checked)
+        img = _make_heat_badge_image(self._size, count, checked=checked)
         if img is not None:
             self._icon_photo = ImageTk.PhotoImage(img)
             self._icon_label.config(image=self._icon_photo)
@@ -6667,7 +6749,7 @@ class PersistentBadge:
                 # detection path, not blanket per-site, so this can't
                 # misapply to a different layout on the same site).
                 gap = BADGE_TOOLBAR_GAP + getattr(rect, "toolbar_extra_gap", 0)
-                bx = toolbar_left - gap - BADGE_ICON_SIZE
+                bx = toolbar_left - gap - self._size
             else:
                 # Fallback: tuck inside the box's own (possibly widened,
                 # see BADGE_WIDEN_RIGHT_SITES) right edge, vertically
@@ -6676,8 +6758,8 @@ class PersistentBadge:
                 # _toolbar_cluster_left couldn't find a real toolbar control
                 # to anchor to (an unrecognized layout), or for sites that
                 # were never widened in the first place.
-                inset = BADGE_INSIDE_INSET + BADGE_INSIDE_INSET_OVERRIDES.get(self._current_app_label, 0)
-                bx = rect.right - BADGE_ICON_SIZE - inset
+                inset = _badge_inset_for(self._current_app_label)
+                bx = rect.right - self._size - inset
             row_top = getattr(rect, "toolbar_row_top", None)
             row_bottom = getattr(rect, "toolbar_row_bottom", None)
             if row_top is not None and row_bottom is not None:
@@ -6686,7 +6768,7 @@ class PersistentBadge:
                 # itself, not the whole (widened) box -- "the badge should
                 # be inline with the rest of the tools," confirmed live
                 # after the box-centred version floated it above the row.
-                by = row_top + (row_bottom - row_top) // 2 - BADGE_ICON_SIZE // 2
+                by = row_top + (row_bottom - row_top) // 2 - self._size // 2
                 vshift = getattr(rect, "toolbar_row_vshift", 0)
                 by -= vshift
                 # Real bug found live 2026-08-03 (Antonio, screenshot +
@@ -6723,9 +6805,9 @@ class PersistentBadge:
                 # box_bottom-widening fix above is the exact same idea,
                 # just for the other edge.
                 top_bound = rect.top - max(0, vshift)
-                by = max(top_bound, min(by, rect.bottom - BADGE_ICON_SIZE))
+                by = max(top_bound, min(by, rect.bottom - self._size))
             else:
-                by = rect.top + box_h // 2 - BADGE_ICON_SIZE // 2
+                by = rect.top + box_h // 2 - self._size // 2
         else:
             # No real box rect (Claude's Electron composer exposes none),
             # just a caret/click point: the fallback that builds this
@@ -6734,7 +6816,7 @@ class PersistentBadge:
             # working backward through this same subtraction -- same
             # "cancels out" trick as before, just mirrored to the box's
             # estimated right edge instead of its left.
-            bx = rect.left - BADGE_ICON_SIZE - BADGE_INSIDE_INSET
+            bx = rect.left - self._size - BADGE_INSIDE_INSET
             by = rect.top - 4
         # Real risk once this always sits relative to the box rather than a
         # remembered position (2026-07-21): a narrow box near a screen edge
@@ -6751,7 +6833,7 @@ class PersistentBadge:
         anchor_x = (rect.left + rect.right) / 2
         anchor_y = (rect.top + rect.bottom) / 2
         return fit_within_window_and_monitor(
-            bx, by, BADGE_ICON_SIZE, BADGE_ICON_SIZE, anchor_x, anchor_y)
+            bx, by, self._size, self._size, anchor_x, anchor_y)
 
     def popup_anchor(self, rect):
         """Where the review card should open so it reads as attached to the
@@ -6776,8 +6858,8 @@ class PersistentBadge:
         anchor_x = (rect.left + rect.right) / 2
         anchor_y = (rect.top + rect.bottom) / 2
         corner = _card_corner(x, y, anchor_x, anchor_y)
-        card_x = x + BADGE_ICON_SIZE - POPUP_WIDTH if corner == "right" else x
-        return (card_x, y + BADGE_ICON_SIZE + 10)
+        card_x = x + self._size - POPUP_WIDTH if corner == "right" else x
+        return (card_x, y + self._size + 10)
 
     def current_badge_rect(self):
         """The badge's live (x, y, w, h), so the card can be placed somewhere
@@ -6785,12 +6867,12 @@ class PersistentBadge:
         try:
             if self.window is not None:
                 return (self.window.winfo_x(), self.window.winfo_y(),
-                        BADGE_ICON_SIZE, BADGE_ICON_SIZE)
+                        self._size, self._size)
         except Exception:
             pass
         if self.user_positioned is not None:
             return (self.user_positioned[0], self.user_positioned[1],
-                    BADGE_ICON_SIZE, BADGE_ICON_SIZE)
+                    self._size, self._size)
         return None
 
     def current_box_rect(self):
@@ -6828,10 +6910,13 @@ class PersistentBadge:
         else:
             anchor_x, anchor_y = bx, by
         corner = _card_corner(bx, by, anchor_x, anchor_y)
-        card_x = bx + BADGE_ICON_SIZE - POPUP_WIDTH if corner == "right" else bx
-        return (card_x, by + BADGE_ICON_SIZE + 10)
+        card_x = bx + self._size - POPUP_WIDTH if corner == "right" else bx
+        return (card_x, by + self._size + 10)
 
     def show_near(self, rect, suggestion_count, checked=True, app_label=None):
+        # Before _ensure_window, so a surface change rebuilds at the new size
+        # rather than drawing once at the old one and correcting next tick.
+        self._apply_size(self._size_for_rect(rect))
         self._ensure_window()
         # Which recognized app/site this box belongs to, so _position_for can
         # look up a per-site inset override (BADGE_INSIDE_INSET_OVERRIDES).
@@ -9870,11 +9955,21 @@ def watch_loop(popup: SuggestionPopup, badge: PersistentBadge, root, warmcard=No
             # positioning specifically, by name, in so many words -- a
             # general "fix the badge" or "fix Claude Code" request does
             # NOT authorize touching this block. Plain blind slice only.
+            #
+            # REOPENED 2026-11-25 by Antonio, by name: "fix the terminal badge
+            # and make sure that is the same on all of them... it should not
+            # be overlapping the main text ever... it live within the line".
+            # See _terminal_badge_rect for the rule. The blind slice below
+            # stays as the last fallback only.
             if raw_rect is not None and process_name in TERMINAL_HOST_PROCESSES:
-                raw_rect = _SimpleRect(
-                    raw_rect.left, raw_rect.bottom - TERMINAL_INPUT_BOX_HEIGHT_GUESS,
-                    raw_rect.right, raw_rect.bottom,
-                )
+                line_rect = _terminal_badge_rect(control, process_name, llm_hwnd, raw_rect, app_label)
+                if line_rect is not None:
+                    raw_rect = line_rect
+                else:
+                    raw_rect = _SimpleRect(
+                        raw_rect.left, raw_rect.bottom - TERMINAL_INPUT_BOX_HEIGHT_GUESS,
+                        raw_rect.right, raw_rect.bottom,
+                    )
 
             # Real bug found live 2026-07-25 (Antonio, screenshot: badge
             # floating in an odd spot -- "everywhere else is fine but on
