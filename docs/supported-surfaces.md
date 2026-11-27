@@ -1,7 +1,10 @@
 # Where Comprsly works
 
 What the app actually recognises today, read out of `product/backend/main.py` at
-`APP_VERSION = "1.0.67"`, not from memory or the website.
+`APP_VERSION = "1.1.1"`, not from memory or the website. Rechecked line by line
+on 2026-11-27 against the tables that do the deciding: `KNOWN_LLM_DOMAINS`,
+`LLM_TITLE_HINTS`, `TERMINAL_HOST_PROCESSES`, `AI_CLI_DESCENDANT_PROCESSES` and
+`AI_CLI_CMDLINE_MARKERS`.
 
 Keep this file honest. It is the source for the website's claims, and the last
 time the site described a feature nobody had checked, it told people to switch
@@ -37,7 +40,8 @@ Character.AI
 
 ## Terminals
 
-Windows Terminal · PowerShell · pwsh · Command Prompt · Git Bash · WSL
+Windows Terminal · PowerShell · pwsh · Command Prompt · Git Bash · WSL · VS Code ·
+Cursor · Windsurf
 
 Matched on the host process, so any CLI agent running inside one of these is
 covered: Claude Code, Gemini CLI, Codex CLI, Copilot CLI.
@@ -67,8 +71,8 @@ only toggle in Settings and it covers everything.
 
 | Surface | Why not | What it would take |
 |---|---|---|
-| ~~VS Code~~ | **Implemented 2026-11-22**, see below. Not shipped: needs a rebuild and a Store cycle. |
-| ~~Cursor~~ / ~~Windsurf~~ | Implemented alongside VS Code, same code path. **Unverified**, neither was running to probe. |
+| ~~VS Code~~ | **Shipped in 1.1.1**, which is published in the Store. See below. | nothing, it is done |
+| ~~Cursor~~ / ~~Windsurf~~ | Shipped on the same code path as VS Code. **Still unverified**, neither has ever been probed. | probe one and confirm the `Terminal ` prefix survives its rebranding |
 | **(original note)** | **Not a recognition problem.** `tools_probe_surfaces.py` confirms VS Code exposes a proper focused `EditControl`, readable right now. `app_label_for()` simply returns nothing for `code.exe`. | Recognise `code.exe`, then tell the integrated terminal and chat panes apart from the code editor. Without that split the badge would appear while you are writing code, which is worse than not supporting it. |
 | Cursor | same shape as VS Code, both are Electron and VS Code derived | same work, probably the same fix |
 | Windsurf | same | same |
@@ -108,7 +112,8 @@ Three things fall out of that:
    chain, a `GroupControl` at 1001x612. The parent directly above the caret
    shares the caret's own 7x17 rect, so the walk has to continue past it.
 
-**Implemented 2026-11-22**, on branch `product/vscode-surface`:
+**Implemented 2026-11-22** on branch `product/vscode-surface`, and **shipped in
+1.1.1**, which is published in the Store:
 
 - `code.exe`, `cursor.exe` and `windsurf.exe` joined `TERMINAL_HOST_PROCESSES`,
   so they pass through the same AI-CLI-descendant gate as every other
@@ -191,8 +196,18 @@ is captured rather than reconstructed.
 
 ## Running the probe
 
+**Broken by the restructure, not yet fixed.** The probe lives in `product/tools/`
+now and `main.py` in `product/backend/`, but the script still does
+`sys.path.insert(0, HERE)` and then `import main`, so it dies with
+`ModuleNotFoundError: No module named 'main'` from any directory. Confirmed
+2026-11-27. `tools_measure_cli_trees.py` and `tools_scan_surfaces.py` have the
+same one wrong line; `measure_vscode_pane.py` already points at `backend`, which
+is the fix to copy.
+
+Once that is fixed, the run is:
+
 ```
-cd product/build
+cd product/tools
 "C:/Users/anton/AppData/Local/Python/pythoncore-3.14-64/python.exe" tools_probe_surfaces.py
 ```
 

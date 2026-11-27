@@ -16,8 +16,13 @@ Checked directly in the dashboard. **Both of the previous records were wrong.**
 
 Minimum OS on the live package: `Windows.Desktop 10.0.17763.0`.
 
-**Any new package must be numbered above 1.0.3.0.** This is why the next
-release is 1.1.0.0 and not something in the 1.0.x range.
+**Any new package must be numbered above whatever is already live.** 1.0.3.0 was
+live when this was written, which is why 1.1.0.0 came next.
+
+**Update, 2026-11-27:** that release shipped. The live package is now **1.1.1.0**
+(`ComprslyStore-1.1.1.msix`, status Published, no pending submission), checked
+with the `msstore` CLI rather than in the browser. `main` is on 1.1.1 too, so the
+Store and the repo match and the next package has to be numbered above 1.1.1.0.
 
 Partner Center is also showing a policy banner: Store Policies were updated
 **2026-09-15, effective 2026-10-22**. `msix-certification-prompt.md` predates
@@ -50,15 +55,21 @@ rejected.
   `ProductVersion` StringStructs
 - `installer.iss` → `MyAppVersion`, `VersionInfoVersion`
 - `msix-conversion-template.xml` → `PackageInformation Version`
+- `Comprsly-mac.spec` → `CFBundleShortVersionString` and `CFBundleVersion`.
+  Not Store bound, but it drifts exactly the same way, and it is already at
+  1.1.1.
 
 Check them against each other before building, every time.
 
 ## Step 1: build the exe (automatable)
 
 ```
-cd desktop
+cd product/build
 "C:/Users/anton/AppData/Local/Python/pythoncore-3.14-64/python.exe" -m PyInstaller Comprsly.spec --noconfirm --clean
 ```
+
+The spec reaches back into `../backend/main.py` and `../frontend/`, so it has to
+be run from `product/build`, not from the repo root.
 
 Then confirm the version actually landed inside the binary, rather than
 trusting the source file:
@@ -92,7 +103,7 @@ present and verified 2026-11-22), which is why the finished package is ~1 GB.
 ## Step 3: MSIX package (REQUIRES A HUMAN)
 
 ```
-"%LOCALAPPDATA%\Microsoft\WindowsApps\MsixPackagingTool.exe" create-package --template "C:\Dev\Claude Code\Projects\Comprsly\desktop\msix-conversion-template.xml" -v
+"%LOCALAPPDATA%\Microsoft\WindowsApps\MsixPackagingTool.exe" create-package --template "C:\Dev\Claude Code\Projects\Comprsly\comprsly\product\build\msix-conversion-template.xml" -v
 ```
 
 **Must run elevated.** The UAC prompt renders on Windows' secure desktop,

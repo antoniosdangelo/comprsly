@@ -1,8 +1,10 @@
 # Comprsly — Microsoft Store / MSIX Certification Audit
 
+**CLOSED HISTORY, 2026-11-27.** Certification passed, and the Store has since moved on to **1.1.1** (`ComprslyStore-1.1.1.msix`, Published, no pending submission, checked with the `msstore` CLI). The six findings below are kept as reference for a future certification report, nothing here is an open task, and the policy caveat in `release-runbook.md` applies: Store Policies were updated 2026-09-15, effective 2026-10-22, so these findings are written against the older policy text.
+
 **STATUS UPDATE, 2026-07-28 (see `Build.md` §10w/§10y for full detail, this note added by the website/Store-side session, findings below left untouched):** the app has since been submitted to the Microsoft Store and is currently **In Certification** (v1.0.1.0 package, `Comprsly 1.0.0.0 Build - Final Version.msix`, real screenshots supplied, all six submission sections Complete). This document's six findings are no longer a pre-submission checklist to work through, they're now **reference material for the certification-failure response playbook in `Build.md` §10w**: if the certification report ever cites a specific policy section, check here first for whether it matches one of these six already-anticipated risks before treating it as a brand-new problem. If certification passes cleanly, this file can be treated as closed history.
 
-**For:** whoever is handling the desktop app build (`Ventures/Comprsly/product/`, `main.py` etc.)
+**For:** whoever is handling the desktop app build (`product/backend/main.py` and its neighbours, in the product repo)
 **Not this assistant's job:** the website, Store listing metadata/Partner Center fields, and the MSIX manifest inspection are being handled separately (Antonio's other Claude Code session, working from `Build.md` in the project root). This doc is specifically the build-side findings from a Microsoft Store Policy compliance audit, done ahead of MSIX submission.
 
 ## Context, in case you're starting cold
