@@ -1,54 +1,59 @@
 # Comprsly branch rules
 
-Written 2026-11-21. Draft for Antonio. Nothing here is on GitHub yet.
-
 ## The two branches that always exist
-- `main`: the working, tested code. This is the only branch a live deploy comes from.
-- `sandbox`: where all new and test code goes first. It runs on your laptop (localhost), not on the internet.
+
+- `main`: tested code. This is what the Store package is built from.
+- `sandbox`: where everything goes first.
 
 ## Work branches
-One branch per piece of work. Name it with its side first, so the side is always visible:
-- `frontend/<what>` for pages, screens and styling. Example: `frontend/notify-ui`.
-- `backend/<what>` for servers, the database and jobs. Example: `backend/gateway-fix`.
-- `docs/<what>` for documents only. Example: `docs/pitch-deck`.
 
-A work branch is merged into `sandbox`, tested, and then deleted. Nothing is merged into `main` straight from a work branch.
+Name the side first, so it is always visible:
+
+- `backend/<what>` for the engine, detection, the tests, the build and the dev tools.
+- `frontend/<what>` for the screens, the icons and the docs.
+
+**One push is exactly two branches, one of each, backend first.** Not three, not one combined. Each carries an untracked `PR.md` beside the work: what changed, why, how it was tested.
 
 ## The path every change takes
+
 1. Branch from `sandbox`.
-2. Run the backend, then the front end, and use the product like a customer (see "Running it" below).
-3. Run the tests. All must pass, except the known failures listed in `KNOWN_FAILURES.md` (none written yet).
-4. Merge into `sandbox`. Delete the work branch.
-5. When `sandbox` is good, merge it into `main`. Only Antonio decides this.
-6. Publishing to the website or to Fly is a separate step. It happens only from `main`, and only after Antonio types "deploy" in the chat of the dev doing it.
+2. Run the app and use it like a customer, then run the tests. All must pass.
+3. Commit locally, authored as Antonio, plain English message, no Claude attribution of any kind. **Then stop.** Agents do not push, do not open pull requests and do not merge.
+4. Antonio reviews the branch in VS Code Source Control and pushes it.
+5. Pull request into `sandbox`. Checks run. **Nothing merges automatically**, Antonio merges it, and the work branch is deleted.
+6. `sandbox` is promoted to `main` only when Antonio says so.
+7. A Store release is a separate, manual job. See `docs/release-runbook.md`.
 
-## Running it (the sandbox test)
-- Backend first: `npm run dev` in `website/backend/`.
-- Then the front end: `npm run dev` in `website/frontend/`.
-- Open the page, run the product through it, then run `npm test`.
-- Every project must use the same three scripts: `dev`, `test`, `deploy`.
+## Running it
 
-## Who may do what
-- Devs: create work branches, merge into `sandbox`.
-- Antonio: merges `sandbox` into `main`, and approves every deploy.
-- Nobody pushes straight to `main`. The push guard in `.githooks/pre-push` stops it on this laptop.
-- Nobody commits secrets. The hook in `.githooks/pre-commit` stops it on this laptop.
+From the repo root:
 
-## Turning the guards on (once per clone)
-`git config core.hooksPath .githooks`
+```
+pip install -r product/build/requirements.txt
+python product/backend/main.py
+python -m unittest discover -s product/backend -p "test_*.py"
+```
 
-GitHub's own branch protection and secret scanning need a paid plan for private repos (not confirmed for this account), so these local hooks are the free version. They only protect machines that have them turned on.
+That is `unittest`, not pytest, which is not installed. CI runs the same test line on a Windows runner, because `main.py` imports a Windows API as it loads. On a Mac it is `requirements-mac.txt` and `python product/backend/main_mac.py --check`.
 
-## Folders inside the repo
-See README.md. product/, frontend/, backend/, extension/, terminal/, docs/, tools/.
-Work branches may also be named product/<what>.
+## What runs on GitHub
+
+- `checks.yml`, on every pull request and every push to `sandbox`: the app compiles, the tests run on `windows-latest`, and gitleaks scans for secrets.
+- `build.yml`, on a push to `main`: builds the installer as an artifact. It does not publish anything to the Store.
+- `macos.yml`: the shared engine and Mac layer tests, the `.app` build, and a smoke run on a macOS runner.
+
+## Guards, once per clone
+
+```
+git config core.hooksPath .githooks
+```
+
+That turns on the secret check and the `main` push guard. They only protect a machine that has them on, which is why nothing secret is ever committed in the first place.
+
+## Folders
+
+`product/backend/`, `product/frontend/`, `product/build/`, `product/tools/`, `docs/`. Nothing else at that level. The website is a separate private repo, `comprsly-website`. Full layout in `README.md`.
 
 ## Databases
-- The repo holds the schema, never live data. Never commit *.sqlite, *.db or backups.
-- Today: Cloudflare D1 comprsly-analytics. Target: MariaDB (proposal).
 
-## Rebuild rule: it must match what exists now
-The front end is rebuilt in React and TypeScript one page at a time, behind the same addresses.
-A page counts as matching only when Playwright screenshots match the current live page at phone,
-tablet and laptop widths, every link and button does what it does today, and the backend answers
-the same requests the same way. Checked by tests, not by eye.
+There is no database and no backend service. Comprsly runs entirely on the user's machine, and its settings and history live in `%LOCALAPPDATA%\Comprsly`. Never commit a `*.sqlite`, `*.db` or a backup.

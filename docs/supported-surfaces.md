@@ -196,16 +196,6 @@ is captured rather than reconstructed.
 
 ## Running the probe
 
-**Broken by the restructure, not yet fixed.** The probe lives in `product/tools/`
-now and `main.py` in `product/backend/`, but the script still does
-`sys.path.insert(0, HERE)` and then `import main`, so it dies with
-`ModuleNotFoundError: No module named 'main'` from any directory. Confirmed
-2026-11-27. `tools_measure_cli_trees.py` and `tools_scan_surfaces.py` have the
-same one wrong line; `measure_vscode_pane.py` already points at `backend`, which
-is the fix to copy.
-
-Once that is fixed, the run is:
-
 ```
 cd product/tools
 "C:/Users/anton/AppData/Local/Python/pythoncore-3.14-64/python.exe" tools_probe_surfaces.py
@@ -213,6 +203,12 @@ cd product/tools
 
 Click into each app, type a few characters, Ctrl+C to stop. Writes
 `probe-surfaces.jsonl` next to itself.
+
+The 2026-11-26 restructure broke this tool and the two beside it: all three
+imported `main` from their own folder, which stopped holding `main.py`, so they
+died with `ModuleNotFoundError` from any directory. Fixed 2026-11-27, and
+`product/backend/test_tools_import.py` now imports each of the three in its own
+interpreter, so the next move cannot kill them in silence.
 
 It is read only and imports `main.py` without starting it, so it is safe to run
 while Comprsly itself is running. It changes no settings, no registry and no
