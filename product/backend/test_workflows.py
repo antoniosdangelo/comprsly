@@ -35,6 +35,26 @@ def workflow_files():
     ]
 
 
+class TheWindowsJobMustKeepExisting(unittest.TestCase):
+    """Several tests skip themselves off Windows, because main.py calls
+    ctypes.windll at import and the suite now runs on macos-latest too. Those
+    skips are only safe while something still runs the suite on Windows. If
+    that job is ever removed or renamed away, the Windows layer would stop
+    being tested anywhere and every sign of it would be a quiet "s" in the
+    output. This is the tripwire for that.
+    """
+
+    def test_checks_yml_runs_the_suite_on_windows(self):
+        path = os.path.join(WORKFLOWS, "checks.yml")
+        self.assertTrue(os.path.isfile(path), path)
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn("windows-latest", text,
+                      "nothing runs the Windows only tests any more")
+        self.assertIn('unittest discover -s product/backend', text,
+                      "the Windows job no longer runs the test suite")
+
+
 class SecretsAreNotReadableInAnIf(unittest.TestCase):
     def test_the_workflow_files_are_actually_there(self):
         """A passing test over an empty list proves nothing."""

@@ -146,14 +146,13 @@ jobs:
   # the system TCC database, which Apple calls unsupported and which is not
   # worth doing to make a CI run look greener than the product is.
   #
-  # Not on pull requests, because it is slow and a runner minute spent on
-  # every PR buys nothing. Run it by hand from the Actions tab any time.
+  # Runs on pull requests too, which is what Antonio asked for: the point is
+  # to see the Mac behave before a branch is merged, and a skipped job shows
+  # him nothing. It also runs on workflow_dispatch, so it can be started by
+  # hand from the Actions tab without pushing anything.
   smoke:
     runs-on: macos-latest
     needs: build
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/sandbox')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
