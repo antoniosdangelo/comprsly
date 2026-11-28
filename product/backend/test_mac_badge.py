@@ -150,6 +150,32 @@ class ItDrawsTheProductsBadgeAndNotAStandIn(unittest.TestCase):
         src = ast.unparse(self.tree())
         self.assertIn("window.BADGE_WINDOW_TITLE", src)
 
+    def test_the_clearing_happens_after_the_window_is_mapped(self):
+        """Tk does not create an NSWindow until it maps, so the first version
+        of this ran during construction and found nothing on four CI rounds
+        in a row, while the report said the ladder had fallen back."""
+        show = next(
+            node for cls in ast.walk(self.tree())
+            if isinstance(cls, ast.ClassDef) and cls.name == "MacBadge"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "show")
+        src = ast.unparse(show)
+        self.assertIn("deiconify", src)
+        self.assertLess(src.index("deiconify"), src.index("_upgrade"),
+                        "the upgrade runs before the window exists")
+
+    def test_a_cleared_window_moves_its_widgets_backgrounds_too(self):
+        """A transparent window with an opaque Label painted over it is an
+        opaque badge. That is the whole lesson of the first CI screenshot."""
+        upgrade = next(
+            node for cls in ast.walk(self.tree())
+            if isinstance(cls, ast.ClassDef) and cls.name == "MacBadge"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_upgrade")
+        src = ast.unparse(upgrade)
+        self.assertIn("badge_background", src)
+        self.assertIn("_label", src)
+
     def test_it_floats_without_taking_focus(self):
         src = ast.unparse(self.tree())
         self.assertIn("window.keep_on_top", src)

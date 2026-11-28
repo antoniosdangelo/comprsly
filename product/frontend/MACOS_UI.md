@@ -48,10 +48,23 @@ exactly the right place with the real artwork, which is what rules out
 position, geometry, the asset and the heat ring and leaves only the keying.
 This is the vanishing this page has warned about since it was written.
 
-So the macOS top rung asks AppKit instead: `setOpaque_(False)` with a clear
-background colour and no shadow, on the Tk toplevel's own NSWindow, found by
-a title nobody ever sees. `keyed` now means the Windows colour key and
-nothing else.
+So the macOS badge asks AppKit instead: `setOpaque_(False)` with a clear
+background colour and no shadow, on the Tk toplevel's own NSWindow. `keyed`
+now means the Windows colour key and nothing else.
+
+**Two corrections to that, both from the run after it.** The NSWindow was
+looked up by title, and an overrideredirect window on Aqua is a borderless
+NSWindow that `wm title` does not reach, so the lookup never matched once and
+every AppKit call below it reported success while doing nothing. It is found
+by what is on screen now: the Tk root is permanently withdrawn, so a single
+visible window IS the badge, and where there is more than one the frame
+decides, converted from Tk's top left origin to AppKit's bottom left.
+
+And the clearing cannot be asked for before the window is mapped, because Tk
+does not create the NSWindow until then. It is an upgrade rather than a rung:
+the window is built on `alpha`, which definitely draws, and improved
+afterwards. A badge that is mapped and ugly beats one that is perfect and
+invisible.
 
 `alpha` and `opaque` are kept below it, and they look nearly identical: the
 0.92 whole-window alpha is barely distinguishable from solid. Either is a
@@ -133,11 +146,13 @@ sends the right one.
    application, so the watch loop read Comprsly's own focused element instead
    of the text box it was badging.
 
-   `wm attributes -topmost` and the non-activating panel style both report
-   success and neither prevents it. It is undone through AppKit instead:
-   `orderOut_` hands key status to whatever the user was really in, and
-   `orderFrontRegardless` puts the badge back on screen without asking to be
-   key and without activating the application.
+   **It was the `-transparent` window doing it.** Abandoning the macOS colour
+   key fixed focus on its own: the run that replaced it passes in all three
+   rungs. The AppKit undo written for this, `orderOut_` to hand key status
+   back and `orderFrontRegardless` to show the badge without asking to be
+   key, has never actually executed, because the window lookup it depends on
+   was broken at the time. It is kept because the clearing may bring the
+   problem back, and the run will say so rather than us assuming either way.
 3. **On a multi display Mac, is the badge where it should be?** **Still needs
    you.** The runner has one display. The Accessibility API reports coordinates
    from the top left of the primary display, which is what the shared geometry

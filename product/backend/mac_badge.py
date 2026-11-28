@@ -175,11 +175,14 @@ class MacBadge:
         self._update_heat(count, checked)
         self.window.geometry("%dx%d+%d+%d" % (size, size, rect.left, rect.top))
         self.window.deiconify()
-        # Tk's own map makes the window key, which is what took the caret from
-        # TextEdit. Undone here rather than prevented, because every Tk level
-        # way of preventing it reported success and did nothing.
-        self.floated = window.float_without_activating(self.window) or self.floated
-        self.native = window.describe_native(self.window)
+        # Everything below needs the NSWindow, and Tk does not create one
+        # until it maps. The first attempt at this ran during construction
+        # and found nothing on every CI round, so the ladder reported its
+        # fallback rung on runs where the clearing itself was never tried.
+        self._upgrade(rect)
+        self.floated = (window.float_without_activating(self.window, rect)
+                        or self.floated)
+        self.native = window.describe_native(self.window, rect)
         # What Tk believes, as opposed to what is on screen. When the two
         # disagree, which one is wrong is the whole question, so both are
         # reported rather than only the one we can see from in here.
@@ -192,6 +195,30 @@ class MacBadge:
         except Exception as exc:
             self.placed = "could not be read: %s" % exc
         return rect
+
+    def _upgrade(self, rect):
+        """Ask AppKit for per pixel transparency, now that there is a window.
+
+        On success the backgrounds have to move with it: a transparent window
+        with an opaque Label painted over it is an opaque badge, which is the
+        2026-11-28 lesson written down in platform_mac/window.py.
+        """
+        if self.prefer in ("alpha", "opaque") or self.transparency == "clear":
+            return
+        if not window.upgrade_to_clear(self.window, rect):
+            return
+        self.transparency = "clear"
+        bg = window.badge_background("clear", BRAND_DARK)
+        for widget in (self.window, self._label):
+            if widget is None:
+                continue
+            try:
+                widget.configure(bg=bg)
+            except Exception:
+                # A toolkit that will not take systemTransparent leaves the
+                # badge on the rung it was built on, which still draws.
+                self.transparency = "clear-but-painted-over"
+                return
 
     def hide(self):
         if self.window is not None:

@@ -34,46 +34,76 @@ def is_macos():
 BADGE_WINDOW_TITLE = "Comprsly badge"
 
 
-def native_window(win):
-    """The NSWindow behind a Tk toplevel, found by its title.
+def native_window(win, rect=None):
+    """The NSWindow behind a Tk toplevel, or None.
 
-    Tk hands out no pointer to it, so the window is given a title nobody ever
-    sees (it is borderless, and an accessory app has no Window menu) and
-    matched by that. Matching is what makes everything below possible: Tk's
-    `wm attributes` covers a fraction of what an NSWindow can be told, and
-    the fraction it covers turned out not to include anything that worked.
+    **Not by title.** That was the first attempt and it never matched once:
+    an overrideredirect window on Aqua is a borderless NSWindow and `wm title`
+    does not reach it, so every CI run reported "no NSWindow with that title"
+    and every AppKit call below it silently did nothing.
+
+    By what is on screen instead. The Tk root is permanently withdrawn and the
+    badge is the only window this application shows, so a single visible
+    window is the badge. When there is more than one, the frame decides, and
+    that conversion is the part worth reading: Tk and the Accessibility API
+    both measure from the TOP left of the screen, AppKit measures from the
+    BOTTOM left, so a badge near the bottom of a text box is near the top of
+    an NSWindow frame.
     """
     if not is_macos():
         return None
     try:
         import AppKit
-        for ns in AppKit.NSApplication.sharedApplication().windows():
-            if str(ns.title() or "") == BADGE_WINDOW_TITLE:
+        showing = [w for w in AppKit.NSApplication.sharedApplication().windows()
+                   if w.isVisible()]
+    except Exception:
+        return None
+    if not showing:
+        return None
+    if len(showing) == 1:
+        return showing[0]
+    if rect is None:
+        return None
+    try:
+        import AppKit
+        height = AppKit.NSScreen.screens()[0].frame().size.height
+        want_x, want_y = rect.left, height - rect.bottom
+        want_w, want_h = rect.right - rect.left, rect.bottom - rect.top
+        for ns in showing:
+            frame = ns.frame()
+            if (abs(frame.origin.x - want_x) <= 2
+                    and abs(frame.origin.y - want_y) <= 2
+                    and abs(frame.size.width - want_w) <= 2
+                    and abs(frame.size.height - want_h) <= 2):
                 return ns
     except Exception:
         pass
     return None
 
 
-def make_badge_window_clear(win):
-    """Per pixel transparency, asked of AppKit rather than of Tk.
+def upgrade_to_clear(win, rect):
+    """Per pixel transparency, asked of AppKit AFTER Tk has mapped the window.
 
-    Replaces `wm attributes -transparent 1` plus a systemTransparent
-    background, which is what the first three CI rounds used and what
-    MACOS_UI.md warned about from the day it was written. Measured on
-    macOS 26.7.2: Tk reported the window mapped and viewable at exactly the
-    right 38x38 rectangle, and the screen was byte identical before and
-    after. Nothing was drawn at all. Forcing the alpha and opaque rungs in
-    the same run drew the real badge in exactly the right place, which is
-    what rules out position, artwork and geometry and leaves the keying.
+    It cannot be asked for before. Tk creates the NSWindow when it maps, so
+    the first version of this ran during construction, found nothing, and the
+    ladder reported 'alpha' on a run where there was nothing wrong with the
+    clearing itself. That is also why this is an upgrade rather than a rung:
+    the window is built on a rung that definitely draws, and then improved if
+    AppKit is reachable.
 
-    setOpaque_(False) with a clear background colour is the documented way
-    to get a window whose transparency comes from what is drawn into it,
-    which is what the badge wants: the mark keeps its own alpha and the
-    square around it has none. The shadow goes because a shadow around an
-    invisible square is a visible square.
+    What it replaces is `wm attributes -transparent 1` plus a systemTransparent
+    background, which on macOS 26.7.2 drew nothing at all while Tk reported
+    the window mapped and viewable at exactly the right rectangle. Forcing the
+    alpha and opaque rungs in the same run drew the real badge in exactly the
+    right place, which rules out position, geometry and artwork.
+
+    setOpaque_(False) with a clear background is the documented way to get a
+    window whose transparency comes from what is drawn into it, which is what
+    the badge wants: the mark keeps its own alpha and the square around it has
+    none. The shadow goes because a shadow around an invisible square is a
+    visible square.
     """
-    ns = native_window(win)
+    ns = native_window(win, rect)
     if ns is None:
         return False
     try:
@@ -81,30 +111,29 @@ def make_badge_window_clear(win):
         ns.setOpaque_(False)
         ns.setBackgroundColor_(AppKit.NSColor.clearColor())
         ns.setHasShadow_(False)
-        win.configure(bg="systemTransparent")
+        # Undo the rung it was built on, or the whole badge stays at 0.92.
+        win.attributes("-alpha", 1.0)
         return True
     except Exception:
         return False
 
 
-def float_without_activating(win):
+def float_without_activating(win, rect=None):
     """Float above other applications WITHOUT becoming the key window.
 
-    `wm attributes -topmost` and the non-activating panel style both report
-    success and both leave the badge taking key status: measured on a CI Mac,
-    where the app was correctly an accessory (the menu bar still said
-    TextEdit) and TextEdit's own title bar went grey the moment the badge
-    appeared. A window that is not key still owns the keyboard focus question
-    as far as the Accessibility API is concerned, so the watch loop then read
-    Comprsly's focused element instead of the text box it was badging.
+    Tk's own map is makeKeyAndOrderFront:, so the badge takes key status as
+    it appears. Ordering out hands that back to whatever the user was really
+    in, which for an accessory application with no other windows is the app
+    they are typing in; ordering front regardless puts the badge back on
+    screen without asking to be key and without activating us.
 
-    orderOut_ then orderFrontRegardless is the pair that fixes it. Ordering
-    out makes AppKit hand key status to the next window in line, which for an
-    accessory app with no other windows is whatever the user was actually in;
-    ordering front regardless shows it again without asking to be key and
-    without activating the application.
+    Worth saying plainly: this has never run. Every CI round so far found no
+    NSWindow, because the lookup was by title. Focus came right anyway when
+    the macOS colour key was abandoned, which means the `-transparent` window
+    was the thing taking focus, not the mapping. This stays because the
+    clearing below may bring the problem back, and the run will say.
     """
-    ns = native_window(win)
+    ns = native_window(win, rect)
     if ns is None:
         return False
     try:
@@ -117,12 +146,20 @@ def float_without_activating(win):
         return False
 
 
-def describe_native(win):
+def describe_native(win, rect=None):
     """What AppKit says about the badge window. For the report, so that the
     next thing we are wrong about is visible rather than inferred."""
-    ns = native_window(win)
+    ns = native_window(win, rect)
     if ns is None:
-        return "no NSWindow with that title"
+        showing = "unknown"
+        try:
+            import AppKit
+            showing = str(len([
+                w for w in AppKit.NSApplication.sharedApplication().windows()
+                if w.isVisible()]))
+        except Exception:
+            pass
+        return "not found, %s visible window(s) in this app" % showing
     try:
         frame = ns.frame()
         return ("key=%s visible=%s opaque=%s alpha=%.2f level=%s "
@@ -172,22 +209,22 @@ def make_badge_window_transparent(win, key_color, prefer=None):
                   present, and the badge is still usable
     "opaque"      neither worked; the badge will show its background
 
+    On macOS the top rung is NOT here. "clear" is applied by upgrade_to_clear
+    after the window is mapped, because the NSWindow it needs does not exist
+    until then. So this builds the window on a rung that definitely draws, and
+    the upgrade improves it if AppKit is reachable.
+
     `prefer` forces a rung instead of taking the first that works. Nothing in
-    the product passes it: it exists so the smoke run can measure all three on
-    a real Mac and settle which one is actually visible there, rather than us
-    picking one and finding out a CI round later. See MACOS_UI.md, which has
-    warned since it was written that the macOS keying is disputed and that
-    some report the window vanishing outright.
+    the product passes it: it exists so the smoke run can measure every rung on
+    a real Mac and settle which is actually visible there, rather than us
+    picking one and finding out a CI round later.
     """
-    if prefer != "alpha" and prefer != "opaque":
-        if not is_macos():
-            try:
-                win.attributes("-transparentcolor", key_color)
-                return "keyed"
-            except Exception:
-                pass
-        elif make_badge_window_clear(win):
-            return "clear"
+    if prefer != "alpha" and prefer != "opaque" and not is_macos():
+        try:
+            win.attributes("-transparentcolor", key_color)
+            return "keyed"
+        except Exception:
+            pass
     if prefer != "opaque":
         try:
             win.attributes("-alpha", BADGE_ALPHA_FALLBACK)

@@ -190,7 +190,7 @@ def classify_badge(mode, corner_delta, centre_delta, noise=PIXEL_NOISE):
         return PASS, ("drawn, and the square around the circle is invisible "
                       "(corners moved %.1f, the mark moved %.1f)"
                       % (corner_delta, centre_delta))
-    if mode in ("keyed", "clear"):
+    if mode in ("keyed", "clear", "clear-but-painted-over"):
         return FAILED, ("the window reported '%s' and its corners still "
                         "changed by %.1f, so the square is being drawn"
                         % (mode, corner_delta))
