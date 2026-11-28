@@ -1,44 +1,47 @@
-"""Which application has focus has to be read now, not remembered.
+"""Finding out which application the user is actually in, on macOS.
 
-Measured on a CI Mac, 2026-11-28, and it is the clearest bug this port has
-produced so far.
+Two CI Macs' worth of evidence sit behind this file, and both runs failed in
+a way that looked like the Accessibility calls were wrong when they were not.
 
-A freshly launched `--check` printed "frontmost app: Finder" and the Finder
-desktop's AXGroup at (0, 0, 1024, 768), which was correct at that instant.
-The long lived script that then opened TextEdit polled for twenty seconds and
-kept reading that same desktop AXGroup, while its own screenshot showed
-TextEdit frontmost with a caret blinking in an open document.
+**Round one.** The focused application came from
+`NSWorkspace.frontmostApplication()`, which is a cached property kept current
+by notifications delivered on the run loop. Nothing here runs one, so the
+first answer was also the last: a fresh `--check` printed "Finder" correctly,
+then the long lived script that opened TextEdit sat for twenty seconds reading
+the Finder desktop's AXGroup at (0, 0, 1024, 768) while its own screenshot
+showed TextEdit frontmost with a caret blinking in a document.
 
-Nothing was wrong with the Accessibility calls. They were pointed at a pid
-that was twenty seconds out of date, because `NSWorkspace.frontmostApplication`
-is a cached property kept current by notifications delivered on the run loop,
-and neither that script nor anything else here runs one.
+**Round two.** Replacing it with `kAXFocusedApplication` on the system wide
+element, which is Apple's documented answer, made it worse: that attribute
+returned nothing on that runner on every call, including from a fresh
+process, while Accessibility was granted and every other attribute worked.
+It is a known pitfall (rdar://10969414) rather than a surprise.
 
-**The product is the long lived process**, so this was never only a test
-problem: the badge would have followed whichever application was in front
-when Comprsly started and never moved to another one.
+So there is a chain now, every rung a different route to the same question,
+and every rung but the last a live query. The point of these tests is that
+the chain FALLS THROUGH and SAYS WHICH RUNG ANSWERED, because a third round
+of guessing would cost more than the diagnostics do.
 
-These tests drive the module with a fake Accessibility layer, so they run on
-any machine. They cannot prove the real API behaves; the macOS smoke run does
-that, and it is the thing that caught this.
+They drive the module with a fake Accessibility layer, so they run on any
+machine. They cannot prove the real API behaves. The macOS smoke run does
+that, and it is what caught both of these.
 """
 
+import ast
 import os
 import sys
 import unittest
-from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from platform_mac import accessibility
 
-FOCUSED_APP = "the focused application element"
-FOCUSED_CONTROL = "the control with the caret"
+APP_ELEMENT = "the focused application element"
+CONTROL = "the control with the caret"
 
 
 class FakeAS:
-    """Only the four names accessibility.py reaches for."""
     kAXFocusedApplicationAttribute = "AXFocusedApplication"
     kAXFocusedUIElementAttribute = "AXFocusedUIElement"
     kAXRoleAttribute = "AXRole"
@@ -46,8 +49,8 @@ class FakeAS:
 
 
 class FakeApp:
-    def __init__(self, name, bundle):
-        self._name, self._bundle = name, bundle
+    def __init__(self, name, bundle, pid):
+        self._name, self._bundle, self._pid = name, bundle, pid
 
     def localizedName(self):
         return self._name
@@ -55,11 +58,11 @@ class FakeApp:
     def bundleIdentifier(self):
         return self._bundle
 
+    def processIdentifier(self):
+        return self._pid
+
 
 class FakeRunningApplication:
-    """NSRunningApplication, looked up by pid rather than by "who is in
-    front", which is the distinction this whole file is about."""
-
     by_pid = {}
 
     @classmethod
@@ -67,41 +70,53 @@ class FakeRunningApplication:
         return cls.by_pid.get(pid)
 
 
-def fake_ax(answers, pid=4242, systemwide_calls=None):
-    """An _AX dict whose answers can change between calls, like a real screen.
+class FakeWorkspace:
+    frontmost_app = None
 
-    `answers` maps an attribute name to a list of values, popped one per call,
-    the last repeating. That is how a stale read is told from a live one: ask
-    twice, and a cached implementation cannot give two different answers.
-    """
+    @classmethod
+    def sharedWorkspace(cls):
+        return cls
+
+    @classmethod
+    def frontmostApplication(cls):
+        return cls.frontmost_app
+
+
+NO_VALUE = -25212
+CANNOT_COMPLETE = -25204
+
+
+def fake_ax(answers, pids=None, calls=None):
+    """An _AX dict. `answers` maps an attribute name to a value or an error
+    code; `pids` maps an element to the process that owns it."""
+    pids = pids or {}
+
     def copy(element, attribute, _placeholder):
-        queue = answers.get(attribute)
-        if not queue:
-            return (-25212, None)          # kAXErrorNoValue
-        value = queue[0] if len(queue) == 1 else queue.pop(0)
-        if value is None:
-            return (-25212, None)
+        if calls is not None:
+            calls.append(attribute)
+        value = answers.get(attribute, NO_VALUE)
+        if isinstance(value, int):
+            return (value, None)
         return (0, value)
 
-    def systemwide():
-        if systemwide_calls is not None:
-            systemwide_calls.append(1)
-        return "the system wide element"
+    def pid_of(element, _placeholder):
+        pid = pids.get(element)
+        return (0, pid) if pid else (CANNOT_COMPLETE, 0)
 
     return {
         "running_app": FakeRunningApplication,
+        "workspace": FakeWorkspace,
         "AS": FakeAS,
-        "systemwide": systemwide,
+        "systemwide": lambda: "the system wide element",
+        "create_app": lambda pid: "app element for %d" % pid,
         "copy": copy,
         "set": lambda *a: 0,
-        "pid_of": lambda element, _: (0, pid),
+        "pid_of": pid_of,
         "trusted": lambda: True,
     }
 
 
-class contextual:
-    """Install a fake _AX for the duration of a block."""
-
+class installed:
     def __init__(self, ax):
         self.ax = ax
 
@@ -114,118 +129,176 @@ class contextual:
         accessibility._AX = self.saved
 
 
-class TheFocusedApplicationComesFromAccessibility(unittest.TestCase):
-    def test_it_asks_the_system_wide_element_every_time(self):
-        """The fix, stated as plainly as it can be: a question, not a memory."""
-        calls = []
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP]},
-                     systemwide_calls=calls)
-        FakeRunningApplication.by_pid = {4242: FakeApp("TextEdit", "com.apple.TextEdit")}
-        with contextual(ax):
-            accessibility.frontmost()
-            accessibility.frontmost()
-            accessibility.focused_element()
-        self.assertEqual(3, len(calls),
-                         "something is caching the focused application")
-
-    def test_a_second_call_sees_a_different_app(self):
-        """The exact CI failure: Finder first, TextEdit a moment later. A
-        cached answer gives Finder both times and the badge never moves."""
-        ax = fake_ax({"AXFocusedApplication": ["finder element", "textedit element"]})
-        FakeRunningApplication.by_pid = {4242: FakeApp("Finder", "com.apple.finder")}
-        with contextual(ax):
-            first = accessibility.frontmost()
-            FakeRunningApplication.by_pid = {
-                4242: FakeApp("TextEdit", "com.apple.TextEdit")}
-            second = accessibility.frontmost()
-        self.assertEqual("Finder", first[2])
-        self.assertEqual("TextEdit", second[2])
-
-    def test_it_reports_the_pid_bundle_and_name(self):
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP]}, pid=991)
-        FakeRunningApplication.by_pid = {991: FakeApp("TextEdit", "com.apple.TextEdit")}
-        with contextual(ax):
-            self.assertEqual((991, "com.apple.TextEdit", "TextEdit"),
-                             accessibility.frontmost())
-
-    def test_nothing_focused_is_none_and_not_a_stale_guess(self):
-        """Failing closed here hides the badge. Falling back to the cached
-        value would put it on the wrong window, which is worse."""
-        ax = fake_ax({"AXFocusedApplication": [None]})
-        with contextual(ax):
-            self.assertIsNone(accessibility.frontmost())
-            self.assertIsNone(accessibility.focused_element())
-
-    def test_an_app_that_has_already_exited_still_gives_a_pid(self):
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP]}, pid=7)
-        FakeRunningApplication.by_pid = {}
-        with contextual(ax):
-            self.assertEqual((7, "", ""), accessibility.frontmost())
+def setUpModule():
+    FakeRunningApplication.by_pid = {
+        77: FakeApp("TextEdit", "com.apple.TextEdit", 77),
+        88: FakeApp("Finder", "com.apple.finder", 88),
+    }
 
 
-class TheFocusedControlComesFromThatApplication(unittest.TestCase):
-    """Through the application element, never the system wide one, which does
-    not answer kAXFocusedUIElement reliably."""
+class TheFirstRungThatAnswersWins(unittest.TestCase):
+    def test_the_documented_attribute_is_tried_first(self):
+        ax = fake_ax({"AXFocusedApplication": APP_ELEMENT}, {APP_ELEMENT: 77})
+        with installed(ax):
+            trace = []
+            pid, how = accessibility.focused_pid(trace)
+        self.assertEqual(77, pid)
+        self.assertEqual("system wide kAXFocusedApplication", how)
+        self.assertEqual(1, len(trace), "it kept going after an answer")
 
-    def test_it_reads_the_control_from_the_app_element(self):
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP],
-                      "AXFocusedUIElement": [FOCUSED_CONTROL]})
-        with contextual(ax):
-            self.assertEqual(FOCUSED_CONTROL, accessibility.focused_element())
+    def test_it_falls_through_the_attribute_that_failed_on_the_runner(self):
+        """The round two failure, exactly: the attribute is refused, and the
+        focused control is reachable, so its owner is the answer."""
+        ax = fake_ax({"AXFocusedApplication": CANNOT_COMPLETE,
+                      "AXFocusedUIElement": CONTROL}, {CONTROL: 77})
+        with installed(ax):
+            trace = []
+            pid, how = accessibility.focused_pid(trace)
+        self.assertEqual(77, pid)
+        self.assertEqual("system wide kAXFocusedUIElement", how)
+        self.assertIn("cannot complete", trace[0][1])
 
-    def test_an_app_with_no_focused_control_is_none(self):
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP],
-                      "AXFocusedUIElement": [None]})
-        with contextual(ax):
-            self.assertIsNone(accessibility.focused_element())
+    def test_the_last_rung_is_the_cached_one(self):
+        """NSWorkspace is still here because it is right in a short lived
+        process. It is LAST because it is the one that can be stale, which is
+        the round one failure."""
+        self.assertEqual("NSWorkspace frontmostApplication",
+                         accessibility._RUNGS[-1][0])
 
-    def test_it_does_not_go_through_a_pid_any_more(self):
-        """Creating an application element from a pid is how the stale value
-        got in. There is no pid in this path now, which is why the fake has
-        no AXUIElementCreateApplication to offer."""
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP],
-                      "AXFocusedUIElement": [FOCUSED_CONTROL]})
-        self.assertNotIn("create_app", ax)
-        with contextual(ax):
-            self.assertEqual(FOCUSED_CONTROL, accessibility.focused_element())
+    def test_the_cached_rung_still_answers_when_nothing_else_can(self):
+        FakeWorkspace.frontmost_app = FakeApp("TextEdit", "com.apple.TextEdit", 77)
+        ax = fake_ax({})
+        with installed(ax):
+            trace = []
+            pid, how = accessibility.focused_pid(trace)
+        FakeWorkspace.frontmost_app = None
+        self.assertEqual(77, pid)
+        self.assertEqual("NSWorkspace frontmostApplication", how)
+        self.assertIn("stale", trace[-1][1], "it has to say so")
 
+    def test_every_rung_is_recorded_even_the_ones_that_failed(self):
+        """The whole reason this exists. Two CI rounds were spent guessing at
+        which call was refusing; a trace is cheaper than a third."""
+        ax = fake_ax({})
+        with installed(ax):
+            trace = []
+            pid, how = accessibility.focused_pid(trace)
+        self.assertIsNone(pid)
+        self.assertIsNone(how)
+        self.assertEqual([name for name, _ in accessibility._RUNGS],
+                         [name for name, _ in trace])
+        for name, note in trace:
+            self.assertTrue(note, "%s said nothing about why" % name)
 
-class ItStillNeverRaises(unittest.TestCase):
-    """Same rule as the rest of the layer. A screen that answers strangely
-    hides the badge; it does not take the app down."""
+    def test_the_error_code_is_named_and_not_just_a_number(self):
+        ax = fake_ax({"AXFocusedApplication": CANNOT_COMPLETE})
+        with installed(ax):
+            trace = []
+            accessibility.focused_pid(trace)
+        self.assertIn("-25204", trace[0][1])
+        self.assertIn("cannot complete", trace[0][1])
 
-    def test_a_raising_accessibility_layer_is_swallowed(self):
+    def test_a_rung_that_raises_is_noted_and_the_chain_continues(self):
+        ax = fake_ax({"AXFocusedUIElement": CONTROL}, {CONTROL: 77})
+
         def boom(*args):
             raise RuntimeError("the window server went away")
 
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP]})
-        ax["copy"] = boom
-        with contextual(ax):
+        ax["systemwide"] = boom
+        with installed(ax):
+            trace = []
+            pid, how = accessibility.focused_pid(trace)
+        # Rungs one and two both need the system wide element, so both raise;
+        # the window server rung is what should answer in a real run.
+        self.assertIn("RuntimeError", trace[0][1])
+        self.assertIsNotNone(trace[1][1])
+
+    def test_nothing_at_all_is_none_rather_than_a_guess(self):
+        ax = fake_ax({})
+        with installed(ax):
             self.assertIsNone(accessibility.frontmost())
             self.assertIsNone(accessibility.focused_element())
 
-    def test_a_pid_lookup_that_fails_is_swallowed(self):
-        ax = fake_ax({"AXFocusedApplication": [FOCUSED_APP]})
-        ax["pid_of"] = lambda element, _: (-25200, 0)
-        with contextual(ax):
+
+class TheControlComesFromTheApplicationElement(unittest.TestCase):
+    """The one part of this that a real Mac HAS verified: an application
+    element built from a pid returned TextEdit's AXTextArea, with its
+    rectangle and its text. Only the question of which pid has moved around."""
+
+    def test_it_reads_the_control_through_the_app_element(self):
+        ax = fake_ax({"AXFocusedApplication": APP_ELEMENT,
+                      "AXFocusedUIElement": CONTROL}, {APP_ELEMENT: 77})
+        with installed(ax):
+            self.assertEqual(CONTROL, accessibility.focused_element())
+
+    def test_it_asks_the_application_and_not_the_system_wide_element(self):
+        asked = []
+        ax = fake_ax({"AXFocusedApplication": APP_ELEMENT,
+                      "AXFocusedUIElement": CONTROL}, {APP_ELEMENT: 77})
+        original = ax["copy"]
+
+        def copy(element, attribute, placeholder):
+            asked.append((element, attribute))
+            return original(element, attribute, placeholder)
+
+        ax["copy"] = copy
+        with installed(ax):
+            accessibility.focused_element()
+        self.assertIn(("app element for 77", "AXFocusedUIElement"), asked)
+
+
+class FrontmostNamesTheApplication(unittest.TestCase):
+    def test_pid_bundle_and_name(self):
+        ax = fake_ax({"AXFocusedApplication": APP_ELEMENT}, {APP_ELEMENT: 77})
+        with installed(ax):
+            self.assertEqual((77, "com.apple.TextEdit", "TextEdit"),
+                             accessibility.frontmost())
+
+    def test_an_app_that_has_already_gone_still_gives_a_pid(self):
+        ax = fake_ax({"AXFocusedApplication": APP_ELEMENT}, {APP_ELEMENT: 404})
+        with installed(ax):
+            self.assertEqual((404, "", ""), accessibility.frontmost())
+
+
+class ItStillNeverRaises(unittest.TestCase):
+    """A screen that answers strangely hides the badge. It does not take the
+    app down."""
+
+    def test_a_raising_layer_is_swallowed(self):
+        def boom(*args):
+            raise RuntimeError("nope")
+
+        ax = fake_ax({})
+        ax["copy"] = boom
+        ax["workspace"] = type("W", (), {"sharedWorkspace": staticmethod(boom)})
+        with installed(ax):
             self.assertIsNone(accessibility.frontmost())
+            self.assertIsNone(accessibility.focused_element())
+
+    def test_without_pyobjc_the_trace_says_so(self):
+        saved = accessibility._AX
+        accessibility._AX = False
+        try:
+            trace = []
+            self.assertEqual((None, None), accessibility.focused_pid(trace))
+            self.assertEqual([("pyobjc", "not installed")], trace)
+        finally:
+            accessibility._AX = saved
 
 
-class NoSourceMentionsTheCachedProperty(unittest.TestCase):
-    """A check that will outlive the memory of why. frontmostApplication is
-    the cache; reaching for it again brings the bug straight back."""
+class TheDiagnosticsAreWiredUp(unittest.TestCase):
+    """--check has to print the trace, or the next CI round is another guess.
+    Read as source: main_mac imports tkinter lazily but this is cheaper."""
 
-    def test_it_is_gone(self):
-        """Parsed rather than grepped, because the docstring that explains the
-        bug has to be free to name the thing it is warning about."""
-        import ast
-        path = os.path.join(HERE, "platform_mac", "accessibility.py")
+    def test_check_prints_which_rung_answered(self):
+        path = os.path.join(HERE, "main_mac.py")
         with open(path, encoding="utf-8") as handle:
             tree = ast.parse(handle.read(), filename=path)
-        called = {node.attr for node in ast.walk(tree)
-                  if isinstance(node, ast.Attribute)}
-        self.assertNotIn("frontmostApplication", called)
-        self.assertNotIn("sharedWorkspace", called)
+        diagnose = next(n for n in tree.body
+                        if isinstance(n, ast.FunctionDef) and n.name == "diagnose")
+        src = ast.unparse(diagnose)
+        self.assertIn("focused_pid", src)
+        self.assertIn("trace", src)
 
 
 if __name__ == "__main__":

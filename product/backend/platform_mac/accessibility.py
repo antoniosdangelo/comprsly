@@ -35,8 +35,10 @@ def _ax():
         import ApplicationServices as AS
         _AX = {
             "running_app": AppKit.NSRunningApplication,
+            "workspace": AppKit.NSWorkspace,
             "AS": AS,
             "systemwide": AS.AXUIElementCreateSystemWide,
+            "create_app": AS.AXUIElementCreateApplication,
             "copy": AS.AXUIElementCopyAttributeValue,
             "set": AS.AXUIElementSetAttributeValue,
             "pid_of": AS.AXUIElementGetPid,
@@ -62,59 +64,171 @@ def permission_granted():
         return False
 
 
-def _focused_app_element():
-    """The AXUIElement of the application with keyboard focus. Read live.
+def _error(err):
+    """An AX error code with its name, because the number alone means nothing
+    to anyone reading a CI log at speed."""
+    return "%s (%s)" % (err, _AX_ERRORS.get(err, "unknown"))
 
-    **Not NSWorkspace.frontmostApplication().** That is a cached property,
-    kept current by notifications delivered on the process's run loop, so a
-    process that never runs one reads whatever happened to be in front the
-    first time it asked and then never learns otherwise.
 
-    Measured on a CI Mac, 2026-11-28. A fresh `--check` process printed
-    "frontmost app: Finder" correctly, then the long lived script that opened
-    TextEdit sat for twenty seconds reading the Finder desktop's AXGroup at
-    (0, 0, 1024, 768) while the screenshot showed TextEdit frontmost with a
-    caret blinking in its document. Nothing was wrong with the Accessibility
-    calls; the pid they were pointed at was twenty seconds out of date.
+# The handful that actually come back from these calls. From AXError.h.
+_AX_ERRORS = {
+    0: "success",
+    -25200: "failure",
+    -25201: "illegal argument",
+    -25202: "invalid UIElement",
+    -25204: "cannot complete",
+    -25205: "attribute unsupported",
+    -25212: "no value",
+    -25211: "not implemented",
+    -25214: "API disabled, Accessibility is off",
+}
 
-    That matters far more to the product than to the test, because the watch
-    loop is exactly such a long lived process: the badge would have followed
-    whichever application was in front when Comprsly started, forever.
 
-    kAXFocusedApplication on the system wide element has no cache and is
-    Apple's own documented route to this. The warning in the module docstring
-    is about asking that element for kAXFocusedUIElement, which is a
-    different attribute and still goes through the application element below.
+def _pid_from_element(element):
+    """The process an AXUIElement belongs to, or None."""
+    ax = _ax()
+    err, pid = ax["pid_of"](element, None)
+    if err != 0 or not pid:
+        return None
+    return int(pid)
+
+
+def _rung_focused_application():
+    """kAXFocusedApplication on the system wide element.
+
+    Apple's documented answer to this exact question, and the first thing to
+    try. It is also known to fail: rdar://10969414 reports the system wide
+    element refusing this attribute, and a CI Mac on macOS 26.7.2 returned
+    nothing for it on every call while Accessibility was granted and every
+    other attribute worked. Hence the rungs below rather than a second guess.
     """
     ax = _ax()
-    if ax is None:
-        return None
-    try:
-        err, app = ax["copy"](ax["systemwide"](),
-                              ax["AS"].kAXFocusedApplicationAttribute, None)
-        return app if err == 0 else None
-    except Exception:
-        return None
+    name = getattr(ax["AS"], "kAXFocusedApplicationAttribute",
+                   "AXFocusedApplication")
+    err, app = ax["copy"](ax["systemwide"](), name, None)
+    if err != 0 or app is None:
+        return None, "attribute %r -> %s" % (str(name), _error(err))
+    pid = _pid_from_element(app)
+    return pid, ("no pid for the element" if pid is None else "pid %d" % pid)
 
 
-def frontmost():
-    """(pid, bundle_id, localised_name) of the app in front, or None.
+def _rung_focused_ui_element():
+    """kAXFocusedUIElement on the system wide element, for its owner only.
 
-    Fails closed when nothing has focus, rather than falling back to
-    NSWorkspace: a stale answer here puts the badge on the wrong window,
-    which is worse than no badge. Same rule as everything else in here.
+    The module docstring is right that this is not a reliable way to get the
+    focused CONTROL. It is a perfectly good way to find out which process
+    owns it, which is all this rung is asked for; the control is then read
+    back through that application's own element like every other rung.
     """
     ax = _ax()
-    element = _focused_app_element()
-    if ax is None or element is None:
+    err, element = ax["copy"](ax["systemwide"](),
+                              ax["AS"].kAXFocusedUIElementAttribute, None)
+    if err != 0 or element is None:
+        return None, _error(err)
+    pid = _pid_from_element(element)
+    return pid, ("no pid for the element" if pid is None else "pid %d" % pid)
+
+
+def _rung_front_window_owner():
+    """Who owns the frontmost on screen window, asked of the window server.
+
+    No cache and no run loop: CGWindowListCopyWindowInfo is a live query. The
+    list comes back front to back, so the first window at layer 0 is the one
+    the user is looking at. Higher layers are the menu bar, the Dock, and
+    floating panels, which includes our own badge, so layer 0 alone would
+    nearly always be enough; our pid is skipped as well, because a badge that
+    found itself would pin the badge to the badge.
+
+    Window TITLES need Screen Recording permission. Owner pid, layer and
+    bounds do not, and those are all this reads.
+    """
+    import os
+    import Quartz
+    options = (Quartz.kCGWindowListOptionOnScreenOnly
+               | Quartz.kCGWindowListExcludeDesktopElements)
+    windows = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID)
+    if not windows:
+        return None, "the window server listed no windows"
+    mine = os.getpid()
+    for window in windows:
+        if int(window.get("kCGWindowLayer", 0)) != 0:
+            continue
+        pid = window.get("kCGWindowOwnerPID")
+        if pid is None or int(pid) == mine:
+            continue
+        return int(pid), "pid %d, %r" % (int(pid),
+                                         str(window.get("kCGWindowOwnerName", "")))
+    return None, "%d windows on screen, none at layer 0" % len(windows)
+
+
+def _rung_workspace():
+    """NSWorkspace.frontmostApplication(), last because it may be stale.
+
+    It is a cached property kept current by notifications delivered on the
+    run loop. A process that never runs one reads whatever was in front the
+    first time it asked and never learns otherwise, which is how a CI run sat
+    for twenty seconds reading the Finder desktop while TextEdit had the
+    caret. For a short lived process it is correct, which is why it is still
+    here rather than deleted.
+
+    Deliberately NOT pumping the run loop to refresh it. The watch loop is a
+    Tk application sharing the same main run loop, and running it re-entrantly
+    from inside a Tk callback can re-enter Tk's own callbacks. If this ever
+    turns out to be the rung that answers, that is the moment to deal with it,
+    and the trace below will say so.
+    """
+    ax = _ax()
+    app = ax["workspace"].sharedWorkspace().frontmostApplication()
+    if app is None:
+        return None, "nothing reported as frontmost"
+    return int(app.processIdentifier()), "pid %d, possibly stale" % int(
+        app.processIdentifier())
+
+
+# In order. Each one answers the same question, "which process has the user's
+# attention", by a different route, and every one of them is a live query
+# except the last.
+_RUNGS = (
+    ("system wide kAXFocusedApplication", _rung_focused_application),
+    ("system wide kAXFocusedUIElement", _rung_focused_ui_element),
+    ("frontmost window's owner", _rung_front_window_owner),
+    ("NSWorkspace frontmostApplication", _rung_workspace),
+)
+
+
+def focused_pid(trace=None):
+    """(pid, which rung answered), or (None, None).
+
+    Pass a list as `trace` to collect (rung name, what it said) for every rung
+    tried. --check prints that, which is the difference between knowing why
+    this failed and guessing at it for another CI round.
+    """
+    if _ax() is None:
+        if trace is not None:
+            trace.append(("pyobjc", "not installed"))
+        return None, None
+    for name, rung in _RUNGS:
+        try:
+            pid, note = rung()
+        except Exception as exc:
+            pid, note = None, "raised %s: %s" % (type(exc).__name__, exc)
+        if trace is not None:
+            trace.append((name, note))
+        if pid:
+            return pid, name
+    return None, None
+
+
+def frontmost(trace=None):
+    """(pid, bundle_id, localised_name) of the app in front, or None."""
+    ax = _ax()
+    pid, _how = focused_pid(trace)
+    if ax is None or pid is None:
         return None
     try:
-        err, pid = ax["pid_of"](element, None)
-        if err != 0:
-            return None
-        pid = int(pid)
-        # Looked up BY pid, so this is not the cached frontmost value again.
-        # A running application's name and bundle id do not change.
+        # Looked up BY pid, so this is a direct lookup and not the cached
+        # "who is in front" value. A running app's name and bundle id do not
+        # change while it runs.
         app = ax["running_app"].runningApplicationWithProcessIdentifier_(pid)
         if app is None:
             return (pid, "", "")
@@ -124,6 +238,24 @@ def frontmost():
     except Exception:
         return None
 
+
+def focused_element(trace=None):
+    """The AXUIElement the caret is in, or None.
+
+    Via the application element, not the system wide one: that is the one
+    thing about this that has been verified on a real Mac, where it returned
+    TextEdit's AXTextArea with its rectangle and its text. Only the question
+    of WHICH application has moved around, which is what focused_pid answers.
+    """
+    ax = _ax()
+    pid, _how = focused_pid(trace)
+    if ax is None or pid is None:
+        return None
+    try:
+        app_element = ax["create_app"](pid)
+    except Exception:
+        return None
+    return _attr(app_element, ax["AS"].kAXFocusedUIElementAttribute)
 
 def _attr(element, name):
     """One accessibility attribute, or None.
@@ -140,21 +272,6 @@ def _attr(element, name):
         return value if err == 0 else None
     except Exception:
         return None
-
-
-def focused_element():
-    """The AXUIElement the caret is in, or None.
-
-    Via the application element, not the system wide one. See the module
-    docstring. The application element comes from _focused_app_element now
-    rather than from a pid, which is both one round trip shorter and the
-    whole of the 2026-11-28 fix described there.
-    """
-    ax = _ax()
-    app_element = _focused_app_element()
-    if ax is None or app_element is None:
-        return None
-    return _attr(app_element, ax["AS"].kAXFocusedUIElementAttribute)
 
 
 def element_role(element):

@@ -355,19 +355,28 @@ def display_width_points():
 
 
 def wait_for_text_box(accessibility, roles, seconds=20):
-    """Poll until the caret is in a text box. Returns (element, role, rect)."""
+    """Poll until the caret is in a text box.
+
+    Returns (element, role, rect, trace). The trace is from the LAST attempt
+    and says which route to the focused application answered, or what each
+    one said when none did. Without it a failure here is unreadable: the
+    screenshot shows TextEdit in front with a caret in it and the script
+    says it found nothing, and the gap between those two is the whole bug.
+    """
     deadline = time.time() + seconds
     last_role = None
+    trace = []
     while time.time() < deadline:
-        element = accessibility.focused_element()
+        trace = []
+        element = accessibility.focused_element(trace)
         role = accessibility.element_role(element) if element else None
         last_role = role or last_role
         if role in roles:
             rect = accessibility.element_rect(element)
             if rect:
-                return element, role, rect
+                return element, role, rect, trace
         time.sleep(0.5)
-    return None, last_role, None
+    return None, last_role, None, trace
 
 
 def main():
@@ -470,7 +479,11 @@ def main():
               PASS if code == 0 else FAILED,
               "opened %s" % os.path.basename(scratch) if code == 0
               else (text or "").strip()[:200])
-    element, role, text_rect = wait_for_text_box(accessibility, TEXT_ROLES)
+    element, role, text_rect, trace = wait_for_text_box(accessibility, TEXT_ROLES)
+    r.note()
+    r.note("  finding the focused application, on the last attempt:")
+    for rung, note in trace:
+        r.note("    %-36s %s" % (rung, note))
     if text_rect is None:
         r.verdict("the caret lands in a text box", FAILED,
                   "after 20s the focused control was %s" % role)

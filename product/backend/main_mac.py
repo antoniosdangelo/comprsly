@@ -95,6 +95,14 @@ def diagnose():
         return 2
     print("  Accessibility permission: granted")
 
+    # The trace, printed whether it worked or not. Two CI rounds were spent
+    # guessing which call was refusing and why; this is cheaper than a third.
+    trace = []
+    _pid, how = accessibility.focused_pid(trace)
+    print("  finding the focused application:")
+    for rung, note in trace:
+        print("    %-36s %s" % (rung, note))
+    print("  answered by: %s" % (how or "nothing, every route refused"))
     front = accessibility.frontmost()
     print("  frontmost app: %s" % (front[2] if front else "could not read it"))
 
