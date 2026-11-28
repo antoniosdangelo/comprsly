@@ -118,6 +118,71 @@ def upgrade_to_clear(win, rect):
         return False
 
 
+def attach_badge_image(win, rect, png_bytes):
+    """Draw the badge with AppKit, because Tk will not draw it on a clear window.
+
+    Measured on macOS 26.7.2, and this is the end of a chain of four:
+
+        the window is there        appkit says visible=True
+        the frame is right         38x38 at exactly the computed point
+        it is genuinely clear      opaque=False, alpha=1.00
+        it is not stealing focus   key=False
+        and the screen is byte identical before and after
+
+    Everything about the window is correct and nothing is drawn into it. A Tk
+    Label on a `systemTransparent` background renders nothing on Aqua, which
+    is also what killed the older `-transparent` route: both times the window
+    was blamed and both times it was the content.
+
+    So Tk stops painting the mark here. An NSImageView holding the real PNG,
+    with its own alpha, goes in as a subview of the content view Tk already
+    owns, which leaves Tk owning geometry, mapping and teardown. The image is
+    the same one Windows draws, unflattened, so its edges stay soft instead
+    of being keyed to one shade.
+
+    shortcut: the image view swallows mouse events, which costs nothing today
+    because there is no review card on macOS for the badge to open. Give it a
+    hitTest_ that returns None, or forward the click, when there is one.
+    """
+    ns = native_window(win, rect)
+    if ns is None:
+        return None
+    try:
+        import AppKit
+        import Foundation
+        data = Foundation.NSData.dataWithBytes_length_(png_bytes, len(png_bytes))
+        image = AppKit.NSImage.alloc().initWithData_(data)
+        if image is None:
+            return None
+        content = ns.contentView()
+        view = AppKit.NSImageView.alloc().initWithFrame_(content.bounds())
+        view.setImage_(image)
+        view.setImageScaling_(AppKit.NSImageScaleAxesIndependently)
+        view.setAutoresizingMask_(
+            AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable)
+        content.addSubview_(view)
+        return view
+    except Exception:
+        return None
+
+
+def set_badge_image(view, png_bytes):
+    """Swap the picture when the heat ring changes. True when it took."""
+    if view is None:
+        return False
+    try:
+        import AppKit
+        import Foundation
+        data = Foundation.NSData.dataWithBytes_length_(png_bytes, len(png_bytes))
+        image = AppKit.NSImage.alloc().initWithData_(data)
+        if image is None:
+            return False
+        view.setImage_(image)
+        return True
+    except Exception:
+        return False
+
+
 def float_without_activating(win, rect=None):
     """Float above other applications WITHOUT becoming the key window.
 

@@ -36,6 +36,7 @@ shortcut: no click handling beyond a callback, because there is no review
 card on macOS to open. Wire on_click when there is one.
 """
 
+import io
 import os
 import tkinter as tk
 
@@ -95,6 +96,8 @@ class MacBadge:
         self.window = None
         self.placed = None         # where Tk says it ended up, after mapping
         self.native = None         # and what AppKit says about the same window
+        self._view = None          # the NSImageView, once AppKit is drawing
+        self._image = None         # the picture both of them are showing
         self._photo = None         # must stay referenced, Tk drops GC'd images
         self._label = None
         self._size = None
@@ -155,6 +158,7 @@ class MacBadge:
             pass
         self.window = None
         self._label = self._photo = self._size = self._heat = None
+        self._view = self._image = None
 
     # ------------------------------------------------------------------ use
 
@@ -182,7 +186,9 @@ class MacBadge:
         self._upgrade(rect)
         self.floated = (window.float_without_activating(self.window, rect)
                         or self.floated)
-        self.native = window.describe_native(self.window, rect)
+        self.native = "%s drawn-by=%s" % (
+            window.describe_native(self.window, rect),
+            "appkit" if self._view is not None else "tk")
         # What Tk believes, as opposed to what is on screen. When the two
         # disagree, which one is wrong is the whole question, so both are
         # reported rather than only the one we can see from in here.
@@ -219,6 +225,12 @@ class MacBadge:
                 # badge on the rung it was built on, which still draws.
                 self.transparency = "clear-but-painted-over"
                 return
+        # Tk draws nothing at all on a clear Aqua window, so AppKit draws the
+        # mark from here on. See platform_mac/window.py.
+        self._view = window.attach_badge_image(self.window, rect,
+                                               _png(self._image))
+        if self._view is None:
+            self.transparency = "clear-but-undrawn"
 
     def hide(self):
         if self.window is not None:
@@ -228,13 +240,30 @@ class MacBadge:
         """Only regenerate the image when the count or `checked` moved.
         Redrawing a PIL image every poll otherwise would be waste."""
         key = (count, checked)
-        if key == self._heat or self._label is None:
+        if key == self._heat:
             return
         image = badge_art.make_heat_badge_image(self._size, count, checked=checked)
-        if image is not None and ImageTk is not None:
+        if image is None:
+            return
+        self._image = image
+        # Whichever of the two is drawing. The Tk label is what the alpha and
+        # opaque rungs show; the image view is what a cleared window shows.
+        if self._label is not None and ImageTk is not None:
             self._photo = ImageTk.PhotoImage(image)
             self._label.config(image=self._photo)
+        if self._view is not None:
+            window.set_badge_image(self._view, _png(image))
         self._heat = key
+
+
+def _png(image):
+    """The badge as PNG bytes, alpha intact. AppKit takes an NSImage and PIL
+    gives an Image, and this is the shortest honest bridge between them."""
+    if image is None:
+        return b""
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def configure_art():

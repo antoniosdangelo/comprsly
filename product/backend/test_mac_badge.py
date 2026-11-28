@@ -176,6 +176,25 @@ class ItDrawsTheProductsBadgeAndNotAStandIn(unittest.TestCase):
         self.assertIn("badge_background", src)
         self.assertIn("_label", src)
 
+    def test_a_cleared_window_has_appkit_draw_the_mark(self):
+        """Tk draws nothing on a clear Aqua window, measured four rounds
+        running. The picture comes from an NSImageView after the upgrade."""
+        src = ast.unparse(self.tree())
+        self.assertIn("window.attach_badge_image", src)
+        self.assertIn("window.set_badge_image", src)
+
+    def test_the_heat_ring_reaches_whichever_one_is_drawing(self):
+        """Two things can be showing the badge and the count has to move both,
+        or the ring freezes on whichever rung the window ended up on."""
+        update = next(
+            node for cls in ast.walk(self.tree())
+            if isinstance(cls, ast.ClassDef) and cls.name == "MacBadge"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_update_heat")
+        src = ast.unparse(update)
+        self.assertIn("_label", src)
+        self.assertIn("set_badge_image", src)
+
     def test_it_floats_without_taking_focus(self):
         src = ast.unparse(self.tree())
         self.assertIn("window.keep_on_top", src)

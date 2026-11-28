@@ -81,19 +81,20 @@ class FakeNS:
 
 
 @contextlib.contextmanager
-def fake_appkit(windows):
+def fake_appkit(windows, extra=None):
     """An AppKit whose application shows exactly these windows."""
     screen = type("Screen", (), {
         "frame": staticmethod(lambda: FakeFrame(0, 0, 1024, SCREEN_HEIGHT))})
-    fake = type("AppKit", (), {
+    members = {
         "NSApplication": type("NSApplication", (), {
             "sharedApplication": staticmethod(
                 lambda: type("App", (), {
                     "windows": staticmethod(lambda: windows)}))}),
         "NSScreen": type("NSScreen", (), {
             "screens": staticmethod(lambda: [screen])}),
-    })
-    with mock.patch.dict("sys.modules", {"AppKit": fake}):
+    }
+    members.update(extra or {})
+    with mock.patch.dict("sys.modules", {"AppKit": type("AppKit", (), members)}):
         yield windows
 
 
@@ -358,6 +359,60 @@ class WhatAppKitIsAskedForDirectly(unittest.TestCase):
             with as_platform(macos=True), fake_appkit(
                     [FakeNS(Rect(1, 1, 9, 9)), FakeNS(Rect(2, 2, 9, 9))]):
                 self.assertIsNone(window.native_window(FakeWin(), RECT))
+
+
+class AppKitDrawsTheMarkBecauseTkWillNot(unittest.TestCase):
+    """The end of a chain of four CI rounds. By the last one AppKit reported
+    the badge window visible, not opaque, alpha 1.00, not key, and 38x38 at
+    exactly the computed point, and the screen was still byte identical
+    before and after. Everything about the window was right and nothing was
+    drawn into it: a Tk Label on a systemTransparent background renders
+    nothing on Aqua. That is also what killed the older -transparent route,
+    so the window was blamed twice for something the content was doing."""
+
+    def test_they_fail_closed_rather_than_raising(self):
+        with as_platform(macos=False):
+            self.assertIsNone(window.attach_badge_image(FakeWin(), RECT, b"x"))
+            self.assertFalse(window.set_badge_image(None, b"x"))
+
+    def test_a_broken_appkit_is_swallowed(self):
+        class Boom:
+            @staticmethod
+            def dataWithBytes_length_(data, length):
+                raise RuntimeError("no Foundation here")
+
+        with as_platform(macos=True), fake_appkit([FakeNS(RECT)]), \
+                mock.patch.dict("sys.modules", {"Foundation": Boom}):
+            self.assertIsNone(window.attach_badge_image(FakeWin(), RECT, b"x"))
+
+    def test_an_image_the_system_cannot_read_is_not_attached(self):
+        """initWithData_ returns nil on bad bytes rather than raising, and a
+        nil image set on a view is an empty badge that looks like a working
+        one."""
+        added = []
+
+        class Content:
+            @staticmethod
+            def bounds():
+                return FakeFrame(0, 0, 38, 38)
+
+            @staticmethod
+            def addSubview_(view):
+                added.append(view)
+
+        ns = FakeNS(RECT)
+        ns.contentView = lambda: Content
+        appkit = {
+            "NSImage": type("NSImage", (), {"alloc": staticmethod(
+                lambda: type("A", (), {"initWithData_": staticmethod(
+                    lambda data: None)}))}),
+        }
+        with as_platform(macos=True), fake_appkit([ns], extra=appkit), \
+                mock.patch.dict("sys.modules", {"Foundation": type(
+                    "F", (), {"dataWithBytes_length_": staticmethod(
+                        lambda d, n: d)})}):
+            self.assertIsNone(window.attach_badge_image(FakeWin(), RECT, b"x"))
+        self.assertEqual([], added, "an unreadable image was attached anyway")
 
 
 class TheMacBadgeMustNotStealFocus(unittest.TestCase):

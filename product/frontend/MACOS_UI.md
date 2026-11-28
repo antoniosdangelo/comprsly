@@ -66,6 +66,32 @@ the window is built on `alpha`, which definitely draws, and improved
 afterwards. A badge that is mapped and ugly beats one that is perfect and
 invisible.
 
+### And then Tk would not draw into it either
+
+The run after that one got the whole window right and still drew nothing:
+
+| What AppKit reported | |
+|---|---|
+| `visible=True` | the window is on screen |
+| `frame=38x38+686+296` | exactly where the shared geometry put it |
+| `opaque=False`, `alpha=1.00` | genuinely clear, not merely faint |
+| `key=False` | and not taking the caret |
+
+Byte identical before and after, all the same. **A Tk Label on a
+`systemTransparent` background renders nothing on Aqua.** That is also what
+killed the original `-transparent` route, so the window took the blame twice
+for something the content was doing.
+
+So Tk stops painting the mark on macOS. An `NSImageView` holding the real
+PNG, alpha intact, goes in as a subview of the content view Tk already owns.
+Tk keeps geometry, mapping and teardown; AppKit supplies the pixels. The
+image is the same one Windows draws and is never flattened, so the edges stay
+soft rather than keyed to one exact shade.
+
+The image view swallows mouse events, which costs nothing while there is no
+review card for the badge to open. Give it a `hitTest_` that returns nothing,
+or forward the click, when there is one.
+
 `alpha` and `opaque` are kept below it, and they look nearly identical: the
 0.92 whole-window alpha is barely distinguishable from solid. Either is a
 dark square with the mark on it, which is usable and wrong, and exactly what
