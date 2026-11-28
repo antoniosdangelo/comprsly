@@ -862,9 +862,18 @@ def _find_spelling_suggestions(text, protected):
     first suggestion, which is sometimes a real word that isn't what the
     user meant, pick the candidate that's the most plausible fat-finger /
     wrong-order typo of what was actually typed. See _best_typo_candidate."""
-    if winspell is None or not winspell.is_available():
-        return []
-    flagged = winspell.check(text)
+    # NOT an early return when there is no spell checker, which is what it
+    # used to be. The override table below is curated, needs no dictionary,
+    # and its own comment says it is scanned independently of winspell's
+    # opinion -- but a `return []` here meant that on any machine without a
+    # checker all 75 of those corrections silently stopped existing too.
+    #
+    # Found on macOS, where there is no checker at all (winspell is Windows
+    # COM), so "teh" went uncorrected. It was equally true on Windows any
+    # time the COM object failed to create, where it would have been much
+    # harder to notice. Only the dictionary-driven half degrades now.
+    has_checker = winspell is not None and winspell.is_available()
+    flagged = winspell.check(text) if has_checker else []
     # Non-English guard (real bug 2026-07-22, market audit): the checker is
     # en-US, so a Spanish/French/German prompt flags on nearly every word and
     # each gets "fixed" in isolation into confident garbage, measured:
