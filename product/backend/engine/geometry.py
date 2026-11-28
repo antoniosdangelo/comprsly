@@ -70,6 +70,18 @@ def _pane_bottom_row(left, right, pane_bottom, line_h):
     return _SimpleRect(left, pane_bottom - line_h, right, pane_bottom)
 
 
+def dock_right(row, size, inset):
+    """A square badge at the right end of a row, `inset` in from its edge.
+
+    _pane_bottom_row says which row; this says where along it. They were one
+    step inside main.py's _position_for, which is 200 lines of per-site
+    special cases that only Windows has. A Mac needs the plain version of the
+    same two sentences, and arithmetic belongs here rather than in a window.
+    """
+    right = row.right - inset
+    return _SimpleRect(right - size, row.bottom - size, right, row.bottom)
+
+
 def _heat_color(count, heat_max):
     """Green (clean) -> red (lots to fix), through yellow/orange. Uses HSV
     hue 120deg->0deg so it passes through natural yellow/orange rather than

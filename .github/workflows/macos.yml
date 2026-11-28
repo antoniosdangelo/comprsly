@@ -135,16 +135,21 @@ jobs:
           if-no-files-found: error
 
   # Antonio wants to see the Mac app behave before paying to rent a Mac. This
-  # drives it on the only Mac available and uploads the report and the
-  # screenshots.
+  # drives the built .app on the only Mac available: it opens TextEdit, types
+  # a sentence with three mistakes in it through the product's own input path,
+  # lets the app draw the REAL badge on that text box, measures the badge in a
+  # screenshot, and then has the app correct the sentence in place.
   #
-  # The honesty rule lives in product/tools/mac_smoke.py: a permission macOS
-  # refused is recorded as BLOCKED, never as a pass, and told apart from a
-  # build that is genuinely broken, which is FAILED. Expect BLOCKED verdicts
-  # here. Accessibility cannot be granted from code at all: there is no API,
-  # tccutil only resets, and the only thing that works is writing rows into
-  # the system TCC database, which Apple calls unsupported and which is not
-  # worth doing to make a CI run look greener than the product is.
+  # The verdicts are in product/tools/mac_smoke.py, and every one of them is a
+  # measurement rather than something the app said about itself. A BLOCKED or
+  # FAILED verdict fails this job: the runner grants both Accessibility and
+  # Screen Recording, so there is nothing here that should legitimately be
+  # refused, and a run that goes quiet is the thing worth catching.
+  #
+  # THREE TIMES, because the thing being proven is that the Mac app behaves,
+  # and a UI driven across process boundaries fails intermittently or not at
+  # all. One green run proves less than three. fail-fast is off so a flaky
+  # attempt does not hide the other two, and each uploads its own report.
   #
   # Runs on pull requests too, which is what Antonio asked for: the point is
   # to see the Mac behave before a branch is merged, and a skipped job shows
@@ -153,6 +158,10 @@ jobs:
   smoke:
     runs-on: macos-latest
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -173,8 +182,10 @@ jobs:
           mkdir -p dist
           tar -xzf Comprsly-mac.tar.gz -C dist
           ls -la dist/Comprsly.app/Contents/MacOS
-      - name: Run it, watch it, write down what happened
+      - name: Drive it, measure it, write down what happened
         working-directory: product/tools
+        # Exits non-zero on any BLOCKED or FAILED verdict, so this step is the
+        # loud failure. The report still gets uploaded by the step below.
         run: python mac_smoke.py --app ../build/dist/Comprsly.app --out "$RUNNER_TEMP/smoke"
       # if: always(), because the most informative run is the one that went
       # wrong, and the report is the only record of why.
@@ -182,6 +193,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: macos-smoke
+          name: macos-smoke-${{ matrix.attempt }}
           path: ${{ runner.temp }}/smoke
           if-no-files-found: error
+      - name: Say what it concluded, in the job summary
+        if: always()
+        run: |
+          echo "## macOS smoke, attempt ${{ matrix.attempt }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          # The verdict table is everything above the first section rule.
+          sed -n '1,/^===/p' "$RUNNER_TEMP/smoke/smoke-report.txt"             | sed '$d' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
