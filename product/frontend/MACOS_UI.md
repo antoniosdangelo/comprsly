@@ -56,6 +56,24 @@ key colour wherever the mark was transparent. That is exactly right for
 a Mac, which composites real alpha and would simply be handed a solid square.
 Flattening is a parameter now: Windows asks for it, macOS does not.
 
+### Tk makes this a regular application, whatever Info.plist says
+
+Found on 2026-11-28, from the first CI screenshot of the real badge. The menu
+bar reads **Comprsly, File, Edit, Window, Help** and there is a Dock icon.
+Those are Tk's own default Aqua menus, not ours, and `LSUIElement` really is
+`true` in the built bundle's `Info.plist`, which was confirmed by reading it.
+**Tk sets the activation policy back to regular when it starts.**
+
+A regular application activates when it shows a window, so the badge appearing
+took the caret from TextEdit. That is fatal twice over: it interrupts typing,
+which is the one thing the badge must never do, and the watch loop then reads
+Comprsly's own focused element instead of the text box it is meant to badge,
+so the badge can never appear again either. One cause, both failures.
+
+`become_accessory_app()` sets `NSApplicationActivationPolicyAccessory` after
+the Tk root exists, since creating the root is what sets the policy it is
+undoing.
+
 ## Two smaller differences, handled
 
 **Focus.** A window that is both topmost and `overrideredirect` can take key
@@ -68,8 +86,14 @@ sends the right one.
 
 ## The four questions, and who can still answer them
 
-1. **Does the badge render as a circle, or as a square?** *Answered by CI, by
-   measurement.* The smoke run screenshots the badge's exact rectangle before
+1. **Does the badge render as a circle, or as a square?** *Being answered by
+   CI, by measurement.* The first run of the real badge drew **nothing at
+   all**: the rectangle it belongs in was byte identical before and after,
+   while the app reported `transparency: keyed` and a window it believed was
+   on screen. That is the vanishing this page has warned about since it was
+   written. The smoke run now measures all three rungs of the ladder in one
+   go and reports which is visible, rather than another round of picking one.
+   *Previously answered by measurement:* The smoke run screenshots the badge's exact rectangle before
    and after it appears and compares the corners. Unchanged corners mean the
    square really is invisible. A window that claims `keyed` while its corners
    change is a FAILED verdict, not a pass, which is the specific way this went

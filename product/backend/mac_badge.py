@@ -36,6 +36,7 @@ shortcut: no click handling beyond a callback, because there is no review
 card on macOS to open. Wire on_click when there is one.
 """
 
+import os
 import tkinter as tk
 
 import badge_art
@@ -81,12 +82,18 @@ class MacBadge:
     the old one otherwise.
     """
 
-    def __init__(self, root, on_click=None):
+    def __init__(self, root, on_click=None, transparency=None):
         self.root = root
         self.on_click = on_click
-        self.window = None
+        # Forced only by the smoke run, through COMPRSLY_BADGE_TRANSPARENCY,
+        # so a real Mac can measure all three rungs of the ladder in one go.
+        # None means the ladder picks, which is what the product does.
+        self.prefer = transparency or os.environ.get(
+            "COMPRSLY_BADGE_TRANSPARENCY") or None
         self.transparency = None   # what the ladder actually managed
         self.floated = None
+        self.window = None
+        self.placed = None         # where Tk says it ended up, after mapping
         self._photo = None         # must stay referenced, Tk drops GC'd images
         self._label = None
         self._size = None
@@ -94,11 +101,17 @@ class MacBadge:
 
     # ---------------------------------------------------------------- window
 
-    def _build(self, size):
+    def _build(self, size, rect):
         win = tk.Toplevel(self.root)
-        win.withdraw()
         win.overrideredirect(True)
-        self.transparency = window.make_badge_window_transparent(win, BRAND_DARK)
+        # Positioned before it is ever mapped, rather than built hidden and
+        # revealed. withdraw() followed by deiconify() on an overrideredirect
+        # Aqua window is one more thing that could explain a badge that never
+        # appeared, and the flash it was there to avoid is one frame in the
+        # right place now instead of the wrong one.
+        win.geometry("%dx%d+%d+%d" % (size, size, rect.left, rect.top))
+        self.transparency = window.make_badge_window_transparent(
+            win, BRAND_DARK, prefer=self.prefer)
         bg = window.badge_background(self.transparency, BRAND_DARK)
         win.configure(bg=bg)
         self.floated = window.keep_on_top(win)
@@ -153,13 +166,24 @@ class MacBadge:
         """
         size = BADGE_SIZE if line_h is None else max(BADGE_MIN_SIZE,
                                                      min(int(line_h), BADGE_SIZE))
+        rect = badge_rect(text_box, size=size)
         if self.window is None or size != self._size:
             self._destroy()
-            self._build(size)
+            self._build(size, rect)
         self._update_heat(count, checked)
-        rect = badge_rect(text_box, size=size)
         self.window.geometry("%dx%d+%d+%d" % (size, size, rect.left, rect.top))
         self.window.deiconify()
+        # What Tk believes, as opposed to what is on screen. When the two
+        # disagree, which one is wrong is the whole question, so both are
+        # reported rather than only the one we can see from in here.
+        try:
+            self.window.update_idletasks()
+            self.placed = "%s mapped=%s viewable=%s" % (
+                self.window.winfo_geometry(),
+                self.window.winfo_ismapped(),
+                self.window.winfo_viewable())
+        except Exception as exc:
+            self.placed = "could not be read: %s" % exc
         return rect
 
     def hide(self):

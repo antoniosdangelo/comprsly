@@ -223,6 +223,60 @@ class TheMeasurementItself(unittest.TestCase):
         self.assertGreater(centre, 100)
 
 
+@unittest.skipIf(Image is None, "Pillow is not installed on this machine")
+class WhereDidAnythingChangeAtAll(unittest.TestCase):
+    """The question that comes after "the badge is not where it belongs".
+
+    The first CI run of the real badge reported corners 0.0 AND centre 0.0:
+    the rectangle was byte identical. From one cropped measurement that reads
+    the same whether the badge drew somewhere else or never drew at all, and
+    those need completely different fixes."""
+
+    def shots(self, folder, paint=None):
+        from PIL import ImageDraw
+        before = Image.new("RGB", (200, 150), (240, 240, 240))
+        # A menu bar with a clock in it, and a Dock, both of which move on
+        # their own and would swamp a 38 point badge if they counted.
+        ImageDraw.Draw(before).rectangle((0, 0, 199, 12), fill=(200, 200, 200))
+        ImageDraw.Draw(before).rectangle((0, 135, 199, 149), fill=(180, 180, 180))
+        after = before.copy()
+        draw = ImageDraw.Draw(after)
+        draw.rectangle((170, 2, 190, 10), fill=(90, 90, 90))      # the clock
+        draw.rectangle((10, 138, 30, 147), fill=(20, 20, 20))     # the Dock
+        if paint:
+            draw.ellipse(paint, fill=(20, 20, 24))
+        before.save(os.path.join(folder, "before.png"))
+        after.save(os.path.join(folder, "after.png"))
+        return (os.path.join(folder, "before.png"),
+                os.path.join(folder, "after.png"))
+
+    def test_a_badge_somewhere_else_is_found(self):
+        with tempfile.TemporaryDirectory() as folder:
+            before, after = self.shots(folder, paint=(60, 60, 97, 97))
+            box = mac_smoke.changed_box(before, after, ignore_top=13,
+                                        ignore_bottom=15)
+        self.assertIsNotNone(box, "a badge on screen was reported as nowhere")
+        left, top, right, bottom = box
+        self.assertTrue(55 <= left <= 65 and 55 <= top <= 65, box)
+
+    def test_a_badge_that_never_drew_is_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            before, after = self.shots(folder)
+            box = mac_smoke.changed_box(before, after, ignore_top=13,
+                                        ignore_bottom=15)
+        self.assertIsNone(box, "the clock or the Dock was counted as the badge")
+
+    def test_the_box_is_reported_in_points_not_pixels(self):
+        """Everything else in the report talks in display points, so a Retina
+        screenshot's pixel coordinates would be silently double."""
+        self.assertEqual("(10, 20) to (30, 40), 20x20 points",
+                         mac_smoke.describe_box((20, 40, 60, 80), scale=2.0))
+
+    def test_nothing_says_so_in_words(self):
+        self.assertEqual("nothing changed anywhere",
+                         mac_smoke.describe_box(None, scale=1.0))
+
+
 class TheTypedSentenceHasToArrive(unittest.TestCase):
     def test_exactly_what_was_sent(self):
         self.assertEqual(PASS, state(mac_smoke.classify_typed(SENTENCE, SENTENCE)))

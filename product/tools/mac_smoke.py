@@ -261,6 +261,42 @@ def badge_deltas(before_png, after_png, rect, scale):
         return corner, centre
 
 
+def changed_box(before_png, after_png, ignore_top=0, ignore_bottom=0,
+                threshold=24):
+    """The bounding box of everything that changed on screen, or None.
+
+    The per-rectangle measurement answers "is the badge where it belongs".
+    This answers the question that comes next when the answer is no: is it
+    somewhere else, or is it nowhere? Those need different fixes and look
+    identical from a single cropped measurement.
+
+    The menu bar and the Dock are excluded, because the clock ticks and the
+    Dock animates when an application launches, and either would swamp a
+    38 point badge.
+    """
+    with Image.open(before_png) as before_img, Image.open(after_png) as after_img:
+        diff = ImageChops.difference(before_img.convert("RGB"),
+                                     after_img.convert("RGB")).convert("L")
+        mask = diff.point(lambda v: 255 if v >= threshold else 0)
+        if ignore_top or ignore_bottom:
+            blank = Image.new("L", (mask.width, max(ignore_top, 1)), 0)
+            if ignore_top:
+                mask.paste(blank, (0, 0))
+            if ignore_bottom:
+                mask.paste(Image.new("L", (mask.width, ignore_bottom), 0),
+                           (0, mask.height - ignore_bottom))
+        return mask.getbbox()
+
+
+def describe_box(box, scale):
+    """A changed-pixel bounding box, in the points the rest of this talks in."""
+    if box is None:
+        return "nothing changed anywhere"
+    left, top, right, bottom = (int(v / scale) for v in box)
+    return "(%d, %d) to (%d, %d), %dx%d points" % (
+        left, top, right, bottom, right - left, bottom - top)
+
+
 def crop_badge(png, rect, scale, out_path, margin=3):
     """A zoomed cut of the badge for human eyes, saved beside the report."""
     with Image.open(png) as shot:
@@ -551,61 +587,114 @@ def main():
     r.note("  what follows is a measurement rather than the window's own")
     r.note("  opinion of itself.")
     points = display_width_points()
-    before_png = shot("badge-before")
-    watcher = subprocess.Popen(
-        [inner, "--seconds", "20"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    )
-    mode = None
-    said = []
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        line = watcher.stdout.readline()
-        if not line:
-            break
-        said.append(line.rstrip())
-        if line.startswith("transparency:"):
-            mode = line.split(":", 1)[1].strip()
-            break
-    time.sleep(2)              # let it paint before the shutter
-    after_png = shot("badge-drawn")
-    front = accessibility.frontmost()
-    r.verdict("the badge did not steal focus",
-              *classify_focus(front_before, front[2] if front else None))
-    try:
-        watcher.wait(timeout=40)
-    except subprocess.TimeoutExpired:
-        watcher.kill()
-    said += [line.rstrip() for line in (watcher.stdout.read() or "").splitlines()]
+
+    def run_the_badge(prefer, label):
+        """Launch the app, let it draw, and measure. Returns a dict."""
+        before_png = shot("%s-before" % label)
+        env = dict(os.environ)
+        if prefer:
+            env["COMPRSLY_BADGE_TRANSPARENCY"] = prefer
+        watcher = subprocess.Popen(
+            [inner, "--seconds", "20"], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        )
+        mode, said = None, []
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            line = watcher.stdout.readline()
+            if not line:
+                break
+            said.append(line.rstrip())
+            if line.startswith("tk says the badge is at:"):
+                break
+            if line.startswith("transparency:"):
+                mode = line.split(":", 1)[1].strip()
+        time.sleep(2)              # let it paint before the shutter
+        after_png = shot("%s-drawn" % label)
+        front_now = accessibility.frontmost()
+        try:
+            watcher.wait(timeout=40)
+        except subprocess.TimeoutExpired:
+            watcher.kill()
+        said += [l.rstrip() for l in (watcher.stdout.read() or "").splitlines()]
+        found = {"mode": mode, "said": said, "before": before_png,
+                 "after": after_png, "front": front_now[2] if front_now else None,
+                 "corner": None, "centre": None, "box": None, "scale": 1.0}
+        if before_png and after_png and points:
+            with Image.open(after_png) as img:
+                scale = img.width / points
+            found["scale"] = scale
+            found["corner"], found["centre"] = badge_deltas(
+                before_png, after_png, where, scale)
+            # Everything that changed anywhere on screen, so "it drew in the
+            # wrong place" cannot be mistaken for "it never drew". The menu
+            # bar is excluded because its clock ticks, and the Dock because
+            # it animates when an application launches.
+            found["box"] = changed_box(before_png, after_png,
+                                       ignore_top=int(26 * scale),
+                                       ignore_bottom=int(90 * scale))
+        return found
+
+    first = run_the_badge(None, "badge")
     r.note()
     r.note("  what the app printed while it ran:")
-    for line in said:
+    for line in first["said"]:
         r.note("    %s" % line)
+    r.verdict("the badge did not steal focus",
+              *classify_focus(front_before, first["front"]))
 
-    if before_png is None or after_png is None:
+    if first["before"] is None or first["after"] is None:
         r.verdict("the real badge draws as a circle", BLOCKED,
                   "no screenshot to measure")
     elif points is None:
         r.verdict("the real badge draws as a circle", UNKNOWN,
                   "could not read the display size, so the crop would be a guess")
     else:
-        with Image.open(after_png) as img:
-            scale = img.width / points
         r.note()
         r.note("  display is %d points wide and the screenshot is %.0fx that"
-               % (points, scale))
-        corner, centre = badge_deltas(before_png, after_png, where, scale)
+               % (points, first["scale"]))
         r.note("  corners moved %.1f, the mark itself moved %.1f (0-255)"
-               % (corner, centre))
+               % (first["corner"], first["centre"]))
+        r.note("  anything at all changed on screen, outside the menu bar and")
+        r.note("  the Dock: %s" % (describe_box(first["box"], first["scale"])))
         r.verdict("the real badge draws as a circle",
-                  *classify_badge(mode, corner, centre))
+                  *classify_badge(first["mode"], first["corner"], first["centre"]))
         zoom = os.path.join(out, "badge-zoom.png")
         try:
-            crop_badge(after_png, where, scale, zoom)
-            r.note("  a 4x cut of it is in %s" % os.path.basename(zoom))
+            crop_badge(first["after"], where, first["scale"], zoom)
+            r.note("  a 4x cut of where it should be is in %s"
+                   % os.path.basename(zoom))
         except Exception as exc:
             r.note("  could not cut the zoom: %s" % exc)
 
+    # ---- 6b. the other two rungs, for information rather than a verdict
+    if first["centre"] is not None and first["centre"] <= PIXEL_NOISE:
+        r.section("6b. The other rungs of the transparency ladder")
+        r.note()
+        r.note("  The ladder picked '%s' and nothing was drawn. MACOS_UI.md has"
+               % first["mode"])
+        r.note("  warned since it was written that the macOS keying is disputed,")
+        r.note("  and that some reports have the window vanishing outright. So")
+        r.note("  the other two rungs are measured here rather than guessed at,")
+        r.note("  because knowing which one is visible on a real Mac is what")
+        r.note("  decides the default. No verdict: this is evidence.")
+        for prefer in ("alpha", "opaque"):
+            result = run_the_badge(prefer, prefer)
+            r.note()
+            r.note("  forced '%s': it reported '%s'" % (prefer, result["mode"]))
+            for line in result["said"]:
+                if line.startswith("tk says") or line.startswith("transparency"):
+                    r.note("    %s" % line)
+            if result["centre"] is None:
+                r.note("    nothing to measure")
+                continue
+            r.note("    corners moved %.1f, the mark moved %.1f"
+                   % (result["corner"], result["centre"]))
+            r.note("    changed on screen: %s"
+                   % describe_box(result["box"], result["scale"]))
+            verdict, why = classify_badge(result["mode"], result["corner"],
+                                          result["centre"])
+            r.note("    would have been: [%s] %s" % (verdict, why))
     # ---- 7. the corrected text, written back into the box
     r.section("7. The correction, applied in place")
     r.note()

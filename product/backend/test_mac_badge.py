@@ -116,6 +116,28 @@ class ItDrawsTheProductsBadgeAndNotAStandIn(unittest.TestCase):
         self.assertEqual([], literals,
                           "a widget is given a hardcoded background")
 
+    def test_the_app_turns_itself_into_an_accessory(self):
+        """Tk makes this a regular application with a Dock icon and a menu
+        bar, whatever Info.plist says, and a regular application activates
+        when it shows a window. The badge taking the caret is fatal."""
+        path = os.path.join(HERE, "main_mac.py")
+        with open(path, encoding="utf-8") as handle:
+            src = ast.unparse(ast.parse(handle.read(), filename=path))
+        self.assertIn("become_accessory_app", src)
+
+    def test_it_is_positioned_before_it_is_ever_mapped(self):
+        """withdraw() then deiconify() on an overrideredirect Aqua window is
+        one more candidate for a badge that never appeared. Built in place
+        instead, so the only flash possible is one frame in the right spot."""
+        build = next(
+            node for cls in ast.walk(self.tree())
+            if isinstance(cls, ast.ClassDef) and cls.name == "MacBadge"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_build")
+        src = ast.unparse(build)
+        self.assertNotIn("withdraw", src)
+        self.assertIn("geometry", src, "it is mapped without a position")
+
     def test_it_floats_without_taking_focus(self):
         src = ast.unparse(self.tree())
         self.assertIn("window.keep_on_top", src)

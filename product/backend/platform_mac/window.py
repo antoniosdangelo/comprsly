@@ -31,32 +31,71 @@ def is_macos():
     return sys.platform == "darwin"
 
 
-def make_badge_window_transparent(win, key_color):
+def become_accessory_app():
+    """Take the Dock icon and the menu bar away, and stop activating.
+
+    LSUIElement is already true in the built Info.plist. It is not enough:
+    **Tk sets the activation policy back to regular when it starts.** The
+    first CI screenshot of the real badge shows the proof, which is Tk's own
+    default Aqua menu bar, File / Edit / Window / Help, sitting under the name
+    Comprsly, with a Dock icon beside the Finder's.
+
+    A regular application activates when it shows a window, so the badge
+    appearing took the caret away from TextEdit. For this product that is
+    fatal twice over: it interrupts typing, and the watch loop then reads
+    Comprsly's own focused element instead of the text box it is meant to
+    badge, so the badge can never appear again either.
+
+    Must be called AFTER the Tk root exists, since that is when Tk sets the
+    policy it is undoing.
+    """
+    if not is_macos():
+        return False
+    try:
+        import AppKit
+        app = AppKit.NSApplication.sharedApplication()
+        return bool(app.setActivationPolicy_(
+            AppKit.NSApplicationActivationPolicyAccessory))
+    except Exception:
+        return False
+
+
+def make_badge_window_transparent(win, key_color, prefer=None):
     """Hide the square around the circular badge. Returns what it managed.
 
     "keyed"       the square is genuinely invisible and click through
     "alpha"       fell back to a whole window alpha; the square is faint but
                   present, and the badge is still usable
     "opaque"      neither worked; the badge will show its background
+
+    `prefer` forces a rung instead of taking the first that works. Nothing in
+    the product passes it: it exists so the smoke run can measure all three on
+    a real Mac and settle which one is actually visible there, rather than us
+    picking one and finding out a CI round later. See MACOS_UI.md, which has
+    warned since it was written that the macOS keying is disputed and that
+    some report the window vanishing outright.
     """
-    if not is_macos():
+    if prefer != "alpha" and prefer != "opaque":
+        if not is_macos():
+            try:
+                win.attributes("-transparentcolor", key_color)
+                return "keyed"
+            except Exception:
+                pass
+        else:
+            try:
+                win.attributes("-transparent", True)
+                win.configure(bg="systemTransparent")
+                return "keyed"
+            except Exception:
+                pass
+    if prefer != "opaque":
         try:
-            win.attributes("-transparentcolor", key_color)
-            return "keyed"
+            win.attributes("-alpha", BADGE_ALPHA_FALLBACK)
+            return "alpha"
         except Exception:
             pass
-    else:
-        try:
-            win.attributes("-transparent", True)
-            win.configure(bg="systemTransparent")
-            return "keyed"
-        except Exception:
-            pass
-    try:
-        win.attributes("-alpha", BADGE_ALPHA_FALLBACK)
-        return "alpha"
-    except Exception:
-        return "opaque"
+    return "opaque"
 
 
 def badge_background(mode, key_color):

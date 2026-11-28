@@ -200,10 +200,17 @@ def watch(seconds=None):
 
     import tkinter as tk
     import mac_badge
+    from platform_mac import window
 
     mac_badge.configure_art()
     root = tk.Tk()
     root.withdraw()                      # the app has no window of its own
+    # AFTER the root exists, because creating it is what Tk sets the policy
+    # in. LSUIElement in Info.plist is not enough on its own; see
+    # platform_mac/window.py.
+    accessory = window.become_accessory_app()
+    print("accessory app (no Dock icon, never activates): %s" % accessory,
+          flush=True)
     badge = mac_badge.MacBadge(root)
     last = [None]
     announced = [False]
@@ -224,6 +231,7 @@ def watch(seconds=None):
                 # says what the ladder managed rather than what it tried.
                 print("transparency: %s" % badge.transparency, flush=True)
                 print("kept on top: %s" % badge.floated, flush=True)
+                print("tk says the badge is at: %s" % badge.placed, flush=True)
                 announced[0] = True
             now = (role, rect, len(text), count, checked)
             if now != last[0]:

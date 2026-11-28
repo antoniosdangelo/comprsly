@@ -133,6 +133,96 @@ class TheLadderHasToReachTheWidgetsInside(unittest.TestCase):
             self.assertEqual(KEY, window.badge_background(None, KEY))
 
 
+class TheLadderCanBeForcedToOneRung(unittest.TestCase):
+    """Nothing in the product forces a rung. The smoke run does, so a real Mac
+    can measure all three in one go instead of us picking one and finding out
+    a CI round later which was visible."""
+
+    def test_forcing_alpha_skips_the_keying_entirely(self):
+        for macos in (False, True):
+            with self.subTest(macos=macos):
+                w = FakeWin()
+                with as_platform(macos=macos):
+                    self.assertEqual(
+                        "alpha",
+                        window.make_badge_window_transparent(w, KEY, prefer="alpha"))
+                self.assertNotIn(("-transparentcolor", KEY), w.calls)
+                self.assertNotIn(("-transparent", True), w.calls)
+
+    def test_forcing_opaque_asks_for_nothing_at_all(self):
+        w = FakeWin()
+        with as_platform(macos=True):
+            self.assertEqual(
+                "opaque",
+                window.make_badge_window_transparent(w, KEY, prefer="opaque"))
+        self.assertEqual([], w.calls)
+
+    def test_no_preference_is_the_ladder_as_it_was(self):
+        w = FakeWin()
+        with as_platform(macos=True):
+            self.assertEqual("keyed",
+                             window.make_badge_window_transparent(w, KEY))
+        self.assertIn(("-transparent", True), w.calls)
+
+    def test_a_forced_rung_that_the_toolkit_refuses_still_degrades(self):
+        w = FakeWin(refuse={"-alpha"})
+        with as_platform(macos=True):
+            self.assertEqual(
+                "opaque",
+                window.make_badge_window_transparent(w, KEY, prefer="alpha"))
+
+
+class TheAppMustNotBeARegularApplication(unittest.TestCase):
+    """LSUIElement is true in the built Info.plist, which was confirmed by
+    reading the bundle, and it is NOT enough: Tk sets the activation policy
+    back to regular when it starts. The CI screenshot shows Tk's own default
+    Aqua menu bar, File / Edit / Window / Help, under the name Comprsly, with
+    a Dock icon beside the Finder's.
+
+    A regular app activates when it shows a window, so the badge appearing
+    took the caret from TextEdit, and the watch loop then read Comprsly's own
+    focused element instead of the text box it was meant to badge."""
+
+    def test_it_does_nothing_on_windows(self):
+        with as_platform(macos=False):
+            self.assertFalse(window.become_accessory_app())
+
+    def test_it_asks_for_the_accessory_policy_on_a_mac(self):
+        asked = []
+
+        class FakeNSApp:
+            @staticmethod
+            def setActivationPolicy_(policy):
+                asked.append(policy)
+                return True
+
+        class FakeAppKit:
+            NSApplicationActivationPolicyAccessory = 1
+
+            @staticmethod
+            def NSApplication():
+                raise AssertionError("must go through sharedApplication")
+
+        FakeAppKit.NSApplication = type(
+            "NSApplication", (), {"sharedApplication": staticmethod(lambda: FakeNSApp)})
+        with as_platform(macos=True), mock.patch.dict(
+                "sys.modules", {"AppKit": FakeAppKit}):
+            self.assertTrue(window.become_accessory_app())
+        self.assertEqual([1], asked)
+
+    def test_a_toolkit_that_refuses_is_reported_and_not_raised(self):
+        class Broken:
+            @staticmethod
+            def sharedApplication():
+                raise RuntimeError("no NSApplication here")
+
+        with as_platform(macos=True), mock.patch.dict(
+                "sys.modules", {"AppKit": type("AppKit", (), {
+                    "NSApplication": Broken,
+                    "NSApplicationActivationPolicyAccessory": 1})}):
+            self.assertFalse(window.become_accessory_app())
+
+
 class TheMacBadgeMustNotStealFocus(unittest.TestCase):
     """The one thing that would make the badge unusable: appearing mid sentence
     and taking the caret. Also never exercised before the suite saw a Mac."""
