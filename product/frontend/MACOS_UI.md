@@ -35,6 +35,29 @@ guess, because the macOS replacement is genuinely disputed:
 | `alpha` | acceptable: a faint square, badge still usable |
 | `opaque` | wrong: the square is visible, and we say so rather than pretend |
 
+### The macOS keying is dead, and it was measured dead
+
+Settled on 2026-11-28, on macOS 26.7.2, by forcing all three rungs in one CI
+run and photographing each.
+
+`wm attributes -transparent 1` plus a `systemTransparent` background draws
+**nothing at all**. Tk reported the window mapped and viewable at exactly the
+right 38x38 rectangle, and the screen was byte identical before and after.
+The same run forced `alpha` and `opaque` and both drew the real badge in
+exactly the right place with the real artwork, which is what rules out
+position, geometry, the asset and the heat ring and leaves only the keying.
+This is the vanishing this page has warned about since it was written.
+
+So the macOS top rung asks AppKit instead: `setOpaque_(False)` with a clear
+background colour and no shadow, on the Tk toplevel's own NSWindow, found by
+a title nobody ever sees. `keyed` now means the Windows colour key and
+nothing else.
+
+`alpha` and `opaque` are kept below it, and they look nearly identical: the
+0.92 whole-window alpha is barely distinguishable from solid. Either is a
+dark square with the mark on it, which is usable and wrong, and exactly what
+the ladder promises you get when the rung above fails.
+
 ### The ladder has to reach the widgets inside, not just the window
 
 Found on 2026-11-28, from the first CI screenshot. The run reported
@@ -99,8 +122,22 @@ sends the right one.
    change is a FAILED verdict, not a pass, which is the specific way this went
    wrong the first time.
 2. **Does it steal focus when it appears while you are typing?** *Answered by
-   CI.* The run reads the frontmost application before and after the badge
-   appears and fails if it moved.
+   CI, and it did.* The run reads the frontmost application before and after
+   the badge appears and fails if it moved.
+
+   Two separate causes, found in that order. Tk made the app a regular
+   application, fixed by the accessory policy above. Then, with the menu bar
+   correctly still reading TextEdit, **the badge window itself became the key
+   window**: TextEdit's title bar went grey the moment the badge appeared, and
+   the Accessibility API then correctly reported Comprsly as the focused
+   application, so the watch loop read Comprsly's own focused element instead
+   of the text box it was badging.
+
+   `wm attributes -topmost` and the non-activating panel style both report
+   success and neither prevents it. It is undone through AppKit instead:
+   `orderOut_` hands key status to whatever the user was really in, and
+   `orderFrontRegardless` puts the badge back on screen without asking to be
+   key and without activating the application.
 3. **On a multi display Mac, is the badge where it should be?** **Still needs
    you.** The runner has one display. The Accessibility API reports coordinates
    from the top left of the primary display, which is what the shared geometry

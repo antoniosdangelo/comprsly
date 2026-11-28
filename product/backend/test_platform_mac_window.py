@@ -54,6 +54,13 @@ def as_platform(macos):
     return mock.patch.object(window, "is_macos", lambda: macos)
 
 
+def appkit_clear(works):
+    """Whether AppKit gives us a per pixel transparent window. That needs a
+    real NSWindow, so it is an input here rather than a fact."""
+    return mock.patch.object(window, "make_badge_window_clear",
+                             lambda win: works)
+
+
 class TransparencyFallsBackRatherThanFails(unittest.TestCase):
     def test_windows_uses_the_colour_key(self):
         w = FakeWin()
@@ -61,41 +68,46 @@ class TransparencyFallsBackRatherThanFails(unittest.TestCase):
             self.assertEqual(window.make_badge_window_transparent(w, KEY), "keyed")
         self.assertIn(("-transparentcolor", KEY), w.calls)
 
-    def test_macos_uses_transparent_and_a_system_background(self):
-        """-transparentcolor does not exist outside Windows, so the Mac has to
-        take the other road. This case never ran until the suite reached a
-        Mac, and then it ran as a failure."""
+    def test_macos_asks_appkit_for_a_clear_window(self):
+        """-transparentcolor does not exist outside Windows, and neither does
+        anything in Tk that worked. `wm attributes -transparent 1` plus a
+        systemTransparent background was measured on macOS 26.7.2 drawing
+        NOTHING AT ALL, while Tk reported the window mapped and viewable at
+        exactly the right rectangle. The same run forced the alpha and opaque
+        rungs and both drew the real badge in the right place, which rules out
+        position, artwork and geometry and leaves the keying."""
         w = FakeWin()
-        with as_platform(macos=True):
-            self.assertEqual(window.make_badge_window_transparent(w, KEY), "keyed")
-        self.assertIn(("-transparent", True), w.calls)
-        self.assertEqual("systemTransparent", w.bg)
+        with as_platform(macos=True), appkit_clear(True):
+            self.assertEqual(window.make_badge_window_transparent(w, KEY), "clear")
         self.assertNotIn(("-transparentcolor", KEY), w.calls)
+        self.assertNotIn(("-transparent", True), w.calls)
 
-    def test_it_falls_back_to_alpha_when_the_key_is_refused(self):
+    def test_it_falls_back_to_alpha_when_the_window_cannot_be_cleared(self):
         """A dark square around the badge is worse than a slightly faint one.
         Both platforms have to fall the same way."""
-        for macos, refused in ((False, "-transparentcolor"), (True, "-transparent")):
-            with self.subTest(macos=macos):
-                w = FakeWin(refuse={refused})
-                with as_platform(macos=macos):
-                    self.assertEqual(
-                        window.make_badge_window_transparent(w, KEY), "alpha")
-                self.assertIn(("-alpha", window.BADGE_ALPHA_FALLBACK), w.calls)
+        w = FakeWin(refuse={"-transparentcolor"})
+        with as_platform(macos=False):
+            self.assertEqual(window.make_badge_window_transparent(w, KEY), "alpha")
+        self.assertIn(("-alpha", window.BADGE_ALPHA_FALLBACK), w.calls)
+
+        w = FakeWin()
+        with as_platform(macos=True), appkit_clear(False):
+            self.assertEqual(window.make_badge_window_transparent(w, KEY), "alpha")
+        self.assertIn(("-alpha", window.BADGE_ALPHA_FALLBACK), w.calls)
 
     def test_it_reports_opaque_rather_than_pretending(self):
         for macos in (False, True):
             with self.subTest(macos=macos):
-                w = FakeWin(refuse={"-transparentcolor", "-transparent", "-alpha"})
-                with as_platform(macos=macos):
+                w = FakeWin(refuse={"-transparentcolor", "-alpha"})
+                with as_platform(macos=macos), appkit_clear(False):
                     self.assertEqual(
                         window.make_badge_window_transparent(w, KEY), "opaque")
 
     def test_it_never_raises_whatever_the_toolkit_does(self):
         for macos in (False, True):
             with self.subTest(macos=macos):
-                w = FakeWin(refuse={"-transparentcolor", "-transparent", "-alpha"})
-                with as_platform(macos=macos):
+                w = FakeWin(refuse={"-transparentcolor", "-alpha"})
+                with as_platform(macos=macos), appkit_clear(False):
                     window.make_badge_window_transparent(w, KEY)   # must return
 
 
@@ -106,10 +118,16 @@ class TheLadderHasToReachTheWidgetsInside(unittest.TestCase):
     drawn straight over it. A transparent window with an opaque child is an
     opaque badge."""
 
-    def test_a_keyed_mac_window_makes_its_children_transparent_too(self):
+    def test_a_cleared_mac_window_makes_its_children_transparent_too(self):
         with as_platform(macos=True):
             self.assertEqual("systemTransparent",
-                             window.badge_background("keyed", KEY))
+                             window.badge_background("clear", KEY))
+
+    def test_the_dead_macos_keying_is_not_coming_back(self):
+        """keyed is the Windows colour key now and nothing else. On Aqua it
+        was measured drawing nothing at all."""
+        with as_platform(macos=True):
+            self.assertEqual(KEY, window.badge_background("keyed", KEY))
 
     def test_windows_children_keep_the_key_colour(self):
         """That shade is what -transparentcolor deletes, so on Windows the
@@ -138,35 +156,41 @@ class TheLadderCanBeForcedToOneRung(unittest.TestCase):
     can measure all three in one go instead of us picking one and finding out
     a CI round later which was visible."""
 
-    def test_forcing_alpha_skips_the_keying_entirely(self):
+    def test_forcing_alpha_skips_the_top_rung_entirely(self):
+        cleared = []
+
+        def note(win):
+            cleared.append(1)
+            return True
+
         for macos in (False, True):
             with self.subTest(macos=macos):
                 w = FakeWin()
-                with as_platform(macos=macos):
+                with as_platform(macos=macos), mock.patch.object(
+                        window, "make_badge_window_clear", note):
                     self.assertEqual(
                         "alpha",
                         window.make_badge_window_transparent(w, KEY, prefer="alpha"))
                 self.assertNotIn(("-transparentcolor", KEY), w.calls)
-                self.assertNotIn(("-transparent", True), w.calls)
+        self.assertEqual([], cleared, "the top rung ran anyway")
 
     def test_forcing_opaque_asks_for_nothing_at_all(self):
         w = FakeWin()
-        with as_platform(macos=True):
+        with as_platform(macos=True), appkit_clear(True):
             self.assertEqual(
                 "opaque",
                 window.make_badge_window_transparent(w, KEY, prefer="opaque"))
         self.assertEqual([], w.calls)
 
-    def test_no_preference_is_the_ladder_as_it_was(self):
+    def test_no_preference_takes_the_top_rung(self):
         w = FakeWin()
-        with as_platform(macos=True):
-            self.assertEqual("keyed",
+        with as_platform(macos=True), appkit_clear(True):
+            self.assertEqual("clear",
                              window.make_badge_window_transparent(w, KEY))
-        self.assertIn(("-transparent", True), w.calls)
 
     def test_a_forced_rung_that_the_toolkit_refuses_still_degrades(self):
         w = FakeWin(refuse={"-alpha"})
-        with as_platform(macos=True):
+        with as_platform(macos=True), appkit_clear(True):
             self.assertEqual(
                 "opaque",
                 window.make_badge_window_transparent(w, KEY, prefer="alpha"))
@@ -221,6 +245,61 @@ class TheAppMustNotBeARegularApplication(unittest.TestCase):
                     "NSApplication": Broken,
                     "NSApplicationActivationPolicyAccessory": 1})}):
             self.assertFalse(window.become_accessory_app())
+
+
+class WhatAppKitIsAskedForDirectly(unittest.TestCase):
+    """Tk hands out no pointer to the NSWindow, and `wm attributes` covers a
+    fraction of what one can be told. The fraction it covers turned out not
+    to include anything that worked, so these three go through AppKit.
+
+    None of them can be exercised for real here: they need a window server
+    and a running NSApplication. What is pinned is that they fail closed off
+    a Mac, never raise, and are actually wired into the badge."""
+
+    def test_they_do_nothing_at_all_on_windows(self):
+        with as_platform(macos=False):
+            self.assertIsNone(window.native_window(FakeWin()))
+            self.assertFalse(window.make_badge_window_clear(FakeWin()))
+            self.assertFalse(window.float_without_activating(FakeWin()))
+
+    def test_describing_a_window_that_is_not_there_says_so(self):
+        with as_platform(macos=False):
+            self.assertIn("no NSWindow", window.describe_native(FakeWin()))
+
+    def test_a_broken_appkit_is_swallowed_rather_than_raised(self):
+        """A badge is decoration. It may fail to float; it may not take the
+        product down while someone is typing."""
+        class Broken:
+            @staticmethod
+            def sharedApplication():
+                raise RuntimeError("no NSApplication here")
+
+        fake = type("AppKit", (), {"NSApplication": Broken})
+        with as_platform(macos=True), mock.patch.dict(
+                "sys.modules", {"AppKit": fake}):
+            self.assertIsNone(window.native_window(FakeWin()))
+            self.assertFalse(window.make_badge_window_clear(FakeWin()))
+            self.assertFalse(window.float_without_activating(FakeWin()))
+            self.assertIn("no NSWindow", window.describe_native(FakeWin()))
+
+    def test_the_window_is_found_by_the_title_the_badge_sets(self):
+        class FakeNS:
+            @staticmethod
+            def title():
+                return window.BADGE_WINDOW_TITLE
+
+        class Other:
+            @staticmethod
+            def title():
+                return "tk"
+
+        fake = type("AppKit", (), {"NSApplication": type(
+            "NSApplication", (), {"sharedApplication": staticmethod(
+                lambda: type("App", (), {"windows": staticmethod(
+                    lambda: [Other, FakeNS])}))})})
+        with as_platform(macos=True), mock.patch.dict(
+                "sys.modules", {"AppKit": fake}):
+            self.assertIs(FakeNS, window.native_window(FakeWin()))
 
 
 class TheMacBadgeMustNotStealFocus(unittest.TestCase):

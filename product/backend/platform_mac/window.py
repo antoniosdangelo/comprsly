@@ -31,6 +31,110 @@ def is_macos():
     return sys.platform == "darwin"
 
 
+BADGE_WINDOW_TITLE = "Comprsly badge"
+
+
+def native_window(win):
+    """The NSWindow behind a Tk toplevel, found by its title.
+
+    Tk hands out no pointer to it, so the window is given a title nobody ever
+    sees (it is borderless, and an accessory app has no Window menu) and
+    matched by that. Matching is what makes everything below possible: Tk's
+    `wm attributes` covers a fraction of what an NSWindow can be told, and
+    the fraction it covers turned out not to include anything that worked.
+    """
+    if not is_macos():
+        return None
+    try:
+        import AppKit
+        for ns in AppKit.NSApplication.sharedApplication().windows():
+            if str(ns.title() or "") == BADGE_WINDOW_TITLE:
+                return ns
+    except Exception:
+        pass
+    return None
+
+
+def make_badge_window_clear(win):
+    """Per pixel transparency, asked of AppKit rather than of Tk.
+
+    Replaces `wm attributes -transparent 1` plus a systemTransparent
+    background, which is what the first three CI rounds used and what
+    MACOS_UI.md warned about from the day it was written. Measured on
+    macOS 26.7.2: Tk reported the window mapped and viewable at exactly the
+    right 38x38 rectangle, and the screen was byte identical before and
+    after. Nothing was drawn at all. Forcing the alpha and opaque rungs in
+    the same run drew the real badge in exactly the right place, which is
+    what rules out position, artwork and geometry and leaves the keying.
+
+    setOpaque_(False) with a clear background colour is the documented way
+    to get a window whose transparency comes from what is drawn into it,
+    which is what the badge wants: the mark keeps its own alpha and the
+    square around it has none. The shadow goes because a shadow around an
+    invisible square is a visible square.
+    """
+    ns = native_window(win)
+    if ns is None:
+        return False
+    try:
+        import AppKit
+        ns.setOpaque_(False)
+        ns.setBackgroundColor_(AppKit.NSColor.clearColor())
+        ns.setHasShadow_(False)
+        win.configure(bg="systemTransparent")
+        return True
+    except Exception:
+        return False
+
+
+def float_without_activating(win):
+    """Float above other applications WITHOUT becoming the key window.
+
+    `wm attributes -topmost` and the non-activating panel style both report
+    success and both leave the badge taking key status: measured on a CI Mac,
+    where the app was correctly an accessory (the menu bar still said
+    TextEdit) and TextEdit's own title bar went grey the moment the badge
+    appeared. A window that is not key still owns the keyboard focus question
+    as far as the Accessibility API is concerned, so the watch loop then read
+    Comprsly's focused element instead of the text box it was badging.
+
+    orderOut_ then orderFrontRegardless is the pair that fixes it. Ordering
+    out makes AppKit hand key status to the next window in line, which for an
+    accessory app with no other windows is whatever the user was actually in;
+    ordering front regardless shows it again without asking to be key and
+    without activating the application.
+    """
+    ns = native_window(win)
+    if ns is None:
+        return False
+    try:
+        import AppKit
+        ns.setLevel_(AppKit.NSStatusWindowLevel)
+        ns.orderOut_(None)
+        ns.orderFrontRegardless()
+        return True
+    except Exception:
+        return False
+
+
+def describe_native(win):
+    """What AppKit says about the badge window. For the report, so that the
+    next thing we are wrong about is visible rather than inferred."""
+    ns = native_window(win)
+    if ns is None:
+        return "no NSWindow with that title"
+    try:
+        frame = ns.frame()
+        return ("key=%s visible=%s opaque=%s alpha=%.2f level=%s "
+                "frame=%.0fx%.0f+%.0f+%.0f"
+                % (bool(ns.isKeyWindow()), bool(ns.isVisible()),
+                   bool(ns.isOpaque()), float(ns.alphaValue()), int(ns.level()),
+                   frame.size.width, frame.size.height,
+                   frame.origin.x, frame.origin.y))
+    except Exception as exc:
+        return "could not be read: %s" % exc
+
+
 def become_accessory_app():
     """Take the Dock icon and the menu bar away, and stop activating.
 
@@ -82,13 +186,8 @@ def make_badge_window_transparent(win, key_color, prefer=None):
                 return "keyed"
             except Exception:
                 pass
-        else:
-            try:
-                win.attributes("-transparent", True)
-                win.configure(bg="systemTransparent")
-                return "keyed"
-            except Exception:
-                pass
+        elif make_badge_window_clear(win):
+            return "clear"
     if prefer != "opaque":
         try:
             win.attributes("-alpha", BADGE_ALPHA_FALLBACK)
@@ -115,7 +214,7 @@ def badge_background(mode, key_color):
     deletes, and on a Mac that is the faint-or-solid square the ladder already
     says you get when the keying did not work.
     """
-    if mode == "keyed" and is_macos():
+    if mode == "clear" and is_macos():
         return "systemTransparent"
     return key_color
 

@@ -138,6 +138,18 @@ class ItDrawsTheProductsBadgeAndNotAStandIn(unittest.TestCase):
         self.assertNotIn("withdraw", src)
         self.assertIn("geometry", src, "it is mapped without a position")
 
+    def test_it_gives_key_status_back_after_tk_takes_it(self):
+        """Tk's own map makes the window key, which is what greyed out
+        TextEdit's title bar the moment the badge appeared. Every Tk level
+        way of preventing that reported success and did nothing, so it is
+        undone through AppKit instead."""
+        src = ast.unparse(self.tree())
+        self.assertIn("window.float_without_activating", src)
+
+    def test_it_sets_the_title_appkit_finds_it_by(self):
+        src = ast.unparse(self.tree())
+        self.assertIn("window.BADGE_WINDOW_TITLE", src)
+
     def test_it_floats_without_taking_focus(self):
         src = ast.unparse(self.tree())
         self.assertIn("window.keep_on_top", src)

@@ -190,10 +190,10 @@ def classify_badge(mode, corner_delta, centre_delta, noise=PIXEL_NOISE):
         return PASS, ("drawn, and the square around the circle is invisible "
                       "(corners moved %.1f, the mark moved %.1f)"
                       % (corner_delta, centre_delta))
-    if mode == "keyed":
-        return FAILED, ("the window reported 'keyed' and its corners still "
+    if mode in ("keyed", "clear"):
+        return FAILED, ("the window reported '%s' and its corners still "
                         "changed by %.1f, so the square is being drawn"
-                        % corner_delta)
+                        % (mode, corner_delta))
     return BLOCKED, ("the transparency ladder fell back to '%s', so the square "
                      "around the badge is visible (corners moved %.1f)"
                      % (mode, corner_delta))
@@ -668,33 +668,36 @@ def main():
             r.note("  could not cut the zoom: %s" % exc)
 
     # ---- 6b. the other two rungs, for information rather than a verdict
-    if first["centre"] is not None and first["centre"] <= PIXEL_NOISE:
-        r.section("6b. The other rungs of the transparency ladder")
+    r.section("6b. The other rungs of the transparency ladder")
+    r.note()
+    r.note("  Measured every time rather than only when the top rung fails,")
+    r.note("  because what the ladder should default to on a Mac is still")
+    r.note("  an open question and one run that answers it beats three that")
+    r.note("  each move it along. The top rung reported '%s'."
+           % first["mode"])
+    r.note("  No verdict here: this is evidence, and the verdict above is")
+    r.note("  about what the product does on its own.")
+    for prefer in ("alpha", "opaque"):
+        result = run_the_badge(prefer, prefer)
         r.note()
-        r.note("  The ladder picked '%s' and nothing was drawn. MACOS_UI.md has"
-               % first["mode"])
-        r.note("  warned since it was written that the macOS keying is disputed,")
-        r.note("  and that some reports have the window vanishing outright. So")
-        r.note("  the other two rungs are measured here rather than guessed at,")
-        r.note("  because knowing which one is visible on a real Mac is what")
-        r.note("  decides the default. No verdict: this is evidence.")
-        for prefer in ("alpha", "opaque"):
-            result = run_the_badge(prefer, prefer)
-            r.note()
-            r.note("  forced '%s': it reported '%s'" % (prefer, result["mode"]))
-            for line in result["said"]:
-                if line.startswith("tk says") or line.startswith("transparency"):
-                    r.note("    %s" % line)
-            if result["centre"] is None:
-                r.note("    nothing to measure")
-                continue
-            r.note("    corners moved %.1f, the mark moved %.1f"
-                   % (result["corner"], result["centre"]))
-            r.note("    changed on screen: %s"
-                   % describe_box(result["box"], result["scale"]))
-            verdict, why = classify_badge(result["mode"], result["corner"],
-                                          result["centre"])
-            r.note("    would have been: [%s] %s" % (verdict, why))
+        r.note("  forced '%s': it reported '%s'" % (prefer, result["mode"]))
+        for line in result["said"]:
+            if (line.startswith("tk says") or line.startswith("appkit says")
+                    or line.startswith("transparency")
+                    or line.startswith("kept on top")):
+                r.note("    %s" % line)
+        focus_state, focus_why = classify_focus(front_before, result["front"])
+        r.note("    focus: [%s] %s" % (focus_state, focus_why))
+        if result["centre"] is None:
+            r.note("    nothing to measure")
+            continue
+        r.note("    corners moved %.1f, the mark moved %.1f"
+               % (result["corner"], result["centre"]))
+        r.note("    changed on screen: %s"
+               % describe_box(result["box"], result["scale"]))
+        verdict, why = classify_badge(result["mode"], result["corner"],
+                                      result["centre"])
+        r.note("    would have been: [%s] %s" % (verdict, why))
     # ---- 7. the corrected text, written back into the box
     r.section("7. The correction, applied in place")
     r.note()

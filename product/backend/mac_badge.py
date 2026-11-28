@@ -94,6 +94,7 @@ class MacBadge:
         self.floated = None
         self.window = None
         self.placed = None         # where Tk says it ended up, after mapping
+        self.native = None         # and what AppKit says about the same window
         self._photo = None         # must stay referenced, Tk drops GC'd images
         self._label = None
         self._size = None
@@ -104,6 +105,14 @@ class MacBadge:
     def _build(self, size, rect):
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
+        # Set before anything can map the window: this is how AppKit is found
+        # again afterwards, and Tk hands out no pointer to the NSWindow. The
+        # title is never seen, since the window is borderless and an accessory
+        # app has no Window menu.
+        try:
+            win.title(window.BADGE_WINDOW_TITLE)
+        except Exception:
+            pass
         # Positioned before it is ever mapped, rather than built hidden and
         # revealed. withdraw() followed by deiconify() on an overrideredirect
         # Aqua window is one more thing that could explain a badge that never
@@ -131,13 +140,6 @@ class MacBadge:
         if self.on_click is not None:
             for widget in (win, label):
                 widget.bind("<ButtonRelease-1>", lambda _e: self.on_click())
-
-        # A Toplevel's title is the literal "tk" until something sets it, and
-        # it is what the window list shows. Same fix as the Windows badge.
-        try:
-            win.title("Comprsly")
-        except Exception:
-            pass
 
         self.window = win
         self._label = label
@@ -173,6 +175,11 @@ class MacBadge:
         self._update_heat(count, checked)
         self.window.geometry("%dx%d+%d+%d" % (size, size, rect.left, rect.top))
         self.window.deiconify()
+        # Tk's own map makes the window key, which is what took the caret from
+        # TextEdit. Undone here rather than prevented, because every Tk level
+        # way of preventing it reported success and did nothing.
+        self.floated = window.float_without_activating(self.window) or self.floated
+        self.native = window.describe_native(self.window)
         # What Tk believes, as opposed to what is on screen. When the two
         # disagree, which one is wrong is the whole question, so both are
         # reported rather than only the one we can see from in here.

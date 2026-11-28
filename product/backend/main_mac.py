@@ -232,6 +232,7 @@ def watch(seconds=None):
                 print("transparency: %s" % badge.transparency, flush=True)
                 print("kept on top: %s" % badge.floated, flush=True)
                 print("tk says the badge is at: %s" % badge.placed, flush=True)
+                print("appkit says the badge is: %s" % badge.native, flush=True)
                 announced[0] = True
             now = (role, rect, len(text), count, checked)
             if now != last[0]:
