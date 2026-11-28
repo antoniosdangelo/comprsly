@@ -199,8 +199,11 @@ def watch(seconds=None):
     badge = mac_badge.MacBadge(root)
     last = [None]
     announced = [False]
+    stopping = [False]
 
     def tick():
+        if stopping[0]:
+            return
         element = accessibility.focused_element()
         role = accessibility.element_role(element) if element else None
         rect = accessibility.element_rect(element) if role in TEXT_ROLES else None
@@ -229,10 +232,17 @@ def watch(seconds=None):
                 last[0] = None
         root.after(int(POLL_SECONDS * 1000), tick)
 
+    def stop():
+        """Stop ticking BEFORE tearing the window down. A poll that fires
+        into a half destroyed Tk interpreter raises, and a traceback at the
+        end of a CI run reads as a failure however clean the run was."""
+        stopping[0] = True
+        root.destroy()
+
     print("Watching. Ctrl+C to stop.\n", flush=True)
     root.after(0, tick)
     if seconds:
-        root.after(int(seconds * 1000), root.destroy)
+        root.after(int(seconds * 1000), stop)
     try:
         root.mainloop()
     except KeyboardInterrupt:

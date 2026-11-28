@@ -524,6 +524,11 @@ def main():
 
     # ---- 6. the real badge
     r.section("6. The real badge, drawn by the built app and then measured")
+    # Re-read the box rather than reusing the rectangle from before the text
+    # went in: the app computes its own from live Accessibility data when it
+    # draws, and measuring a different rectangle than the one it drew into
+    # would report a working badge as missing.
+    text_rect = accessibility.element_rect(element) or text_rect
     where = mac_badge.badge_rect(text_rect)
     r.note()
     r.note("  The badge belongs at (%d, %d) to (%d, %d): the shared geometry's"
