@@ -129,13 +129,13 @@ class TheBadgeVerdictIsAMeasurement(unittest.TestCase):
     """A window that says it is transparent is not evidence that it is."""
 
     def test_untouched_corners_are_the_only_pass(self):
-        self.assertEqual(PASS, state(mac_smoke.classify_badge("keyed", 0.4, 90.0)))
+        self.assertEqual(PASS, state(mac_smoke.classify_badge("clear", 10.2, 180.0)))
 
-    def test_a_window_that_claims_keyed_and_paints_its_corners_is_a_bug(self):
-        """This is exactly what shipped the first time: `-transparent` was
-        accepted, the Canvas inside it was opaque, and the report said keyed
+    def test_a_window_that_claims_to_be_clear_and_paints_a_square_is_a_bug(self):
+        """This is exactly what shipped the first time: the attribute was
+        accepted, the widget inside it was opaque, and the report said keyed
         over a screenshot of a dark rectangle. It must never be a pass."""
-        self.assertEqual(FAILED, state(mac_smoke.classify_badge("keyed", 70.0, 90.0)))
+        self.assertEqual(FAILED, state(mac_smoke.classify_badge("clear", 214.7, 180.0)))
 
     def test_a_declared_fallback_is_blocked_rather_than_failed(self):
         """alpha and opaque are documented rungs of the ladder. The square is
@@ -143,84 +143,121 @@ class TheBadgeVerdictIsAMeasurement(unittest.TestCase):
         for mode in ("alpha", "opaque"):
             with self.subTest(mode=mode):
                 self.assertEqual(
-                    BLOCKED, state(mac_smoke.classify_badge(mode, 70.0, 90.0)))
+                    BLOCKED, state(mac_smoke.classify_badge(mode, 214.7, 180.0)))
 
     def test_a_badge_that_never_appeared_beats_every_other_complaint(self):
         """Corners that did not move only mean transparency if something was
         drawn at all. Checked first, or an app that failed to start would
         report a perfectly transparent badge."""
-        self.assertEqual(FAILED, state(mac_smoke.classify_badge("keyed", 0.0, 0.0)))
+        self.assertEqual(FAILED, state(mac_smoke.classify_badge("clear", 0.0, 0.0)))
         self.assertEqual(FAILED, state(mac_smoke.classify_badge(None, 0.0, 0.0)))
 
     def test_a_window_that_said_nothing_still_gets_judged_on_its_pixels(self):
         """The app may die before printing its mode. The screenshot does not
         care, and a visible square is still reportable."""
         self.assertEqual(PASS, state(mac_smoke.classify_badge(None, 0.2, 80.0)))
-        self.assertEqual(BLOCKED, state(mac_smoke.classify_badge(None, 80.0, 90.0)))
+        self.assertEqual(BLOCKED, state(mac_smoke.classify_badge(None, 214.7, 90.0)))
 
-    def test_screen_noise_does_not_count_as_a_square(self):
-        just_under = mac_smoke.PIXEL_NOISE - 0.1
-        self.assertEqual(PASS, state(mac_smoke.classify_badge("keyed", just_under, 90.0)))
+    def test_the_marks_own_soft_edge_does_not_count_as_a_square(self):
+        """10.2 is what a correct badge measured on a real Mac: the mark's
+        anti-aliasing bleeding a pixel past where the reference image says it
+        ends. macOS is deliberately not asked to flatten that away."""
+        self.assertEqual(PASS, state(mac_smoke.classify_badge("clear", 10.2, 181.5)))
+        self.assertEqual(FAILED, state(mac_smoke.classify_badge("clear", 214.7, 167.4)))
 
 
 @unittest.skipIf(Image is None, "Pillow is not installed on this machine")
-class TheMeasurementItself(unittest.TestCase):
-    """badge_deltas is arithmetic over two PNGs, so it runs anywhere."""
+class TheMeasurementComesFromTheBadgesOwnArtwork(unittest.TestCase):
+    """The first version sampled the four corners of the 38x38 box and called
+    a perfectly good badge a square. Two reasons, both of them the artwork's
+    doing rather than noise: the heat dot sits IN the bottom right corner, and
+    the mark's anti-aliased edge reaches the other three. macOS is deliberately
+    not asked to flatten that edge, so it is there by design.
+
+    Measured on one real CI run, over the pixels the artwork leaves fully
+    transparent: the working badge moved them 10.2, a faint square 214.7, a
+    solid one 232.9. A factor of twenty, which is what makes a threshold
+    between them honest rather than tuned."""
 
     class Rect:
         def __init__(self, left, top, right, bottom):
             self.left, self.top, self.right, self.bottom = left, top, right, bottom
 
-    def test_a_circle_on_a_background_moves_the_middle_and_not_the_corners(self):
+    def art(self, size=40, radius=16):
+        """A stand in for the badge: an opaque disc on a transparent square."""
         from PIL import ImageDraw
-        with tempfile.TemporaryDirectory() as folder:
-            before = Image.new("RGB", (100, 100), (240, 240, 240))
-            before.save(os.path.join(folder, "before.png"))
-            after = before.copy()
-            # The badge: a circle inscribed in the 40x40 square at (20, 20).
-            ImageDraw.Draw(after).ellipse((20, 20, 59, 59), fill=(20, 20, 24))
-            after.save(os.path.join(folder, "after.png"))
-            corner, centre = mac_smoke.badge_deltas(
-                os.path.join(folder, "before.png"),
-                os.path.join(folder, "after.png"),
-                self.Rect(20, 20, 60, 60), scale=1.0)
-        self.assertLess(corner, mac_smoke.PIXEL_NOISE)
-        self.assertGreater(centre, 100)
+        art = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        middle = size / 2
+        ImageDraw.Draw(art).ellipse(
+            (middle - radius, middle - radius, middle + radius, middle + radius),
+            fill=(20, 20, 24, 255))
+        return art
 
-    def test_a_filled_square_moves_the_corners_too(self):
-        """The failure this whole measurement exists to catch."""
-        with tempfile.TemporaryDirectory() as folder:
-            before = Image.new("RGB", (100, 100), (240, 240, 240))
-            before.save(os.path.join(folder, "before.png"))
-            after = before.copy()
-            for x in range(20, 60):
-                for y in range(20, 60):
-                    after.putpixel((x, y), (20, 20, 24))
-            after.save(os.path.join(folder, "after.png"))
-            corner, centre = mac_smoke.badge_deltas(
-                os.path.join(folder, "before.png"),
-                os.path.join(folder, "after.png"),
-                self.Rect(20, 20, 60, 60), scale=1.0)
-        self.assertGreater(corner, 100)
-        self.assertGreater(centre, 100)
+    def shots(self, folder, paint):
+        """A screen before and after something is drawn at (20, 20)."""
+        before = Image.new("RGB", (100, 100), (240, 240, 240))
+        before.save(os.path.join(folder, "before.png"))
+        after = before.copy()
+        after.paste(paint, (20, 20), paint)
+        after.save(os.path.join(folder, "after.png"))
+        return (os.path.join(folder, "before.png"),
+                os.path.join(folder, "after.png"))
 
-    def test_a_retina_screenshot_is_cropped_at_the_right_place(self):
+    def measure(self, folder, paint, scale=1.0, art=None):
+        before, after = self.shots(folder, paint)
+        return mac_smoke.badge_deltas(before, after, self.Rect(20, 20, 60, 60),
+                                      scale, art or self.art())
+
+    def test_the_badge_itself_leaves_its_surroundings_untouched(self):
+        with tempfile.TemporaryDirectory() as folder:
+            invisible, mark = self.measure(folder, self.art())
+        self.assertLess(invisible, mac_smoke.SQUARE_VISIBLE)
+        self.assertGreater(mark, 100)
+
+    def test_a_square_behind_the_badge_is_caught(self):
+        """The failure this exists for. The mark is identical; only the
+        transparent part of the picture is filled in."""
+        paint = self.art()
+        paint.paste((20, 20, 24, 255), (0, 0, 40, 40), None)
+        paint.alpha_composite(self.art())
+        with tempfile.TemporaryDirectory() as folder:
+            invisible, mark = self.measure(folder, paint)
+        self.assertGreater(invisible, mac_smoke.SQUARE_VISIBLE)
+        self.assertGreater(mark, 100)
+
+    def test_a_badge_that_never_drew_moves_neither(self):
+        blank = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+        with tempfile.TemporaryDirectory() as folder:
+            invisible, mark = self.measure(folder, blank)
+        self.assertLess(mark, mac_smoke.PIXEL_NOISE)
+        self.assertLess(invisible, mac_smoke.PIXEL_NOISE)
+
+    def test_a_retina_screenshot_is_cropped_and_masked_at_the_right_scale(self):
         """The Accessibility API answers in points and screencapture writes
-        pixels. Getting this backwards would measure empty desktop and call
-        the badge missing."""
-        from PIL import ImageDraw
+        pixels. Getting this backwards measures empty desktop and calls a
+        working badge missing."""
+        big = self.art(size=80, radius=32)
         with tempfile.TemporaryDirectory() as folder:
             before = Image.new("RGB", (200, 200), (240, 240, 240))
             before.save(os.path.join(folder, "before.png"))
             after = before.copy()
-            ImageDraw.Draw(after).ellipse((40, 40, 119, 119), fill=(20, 20, 24))
+            after.paste(big, (40, 40), big)
             after.save(os.path.join(folder, "after.png"))
-            corner, centre = mac_smoke.badge_deltas(
+            invisible, mark = mac_smoke.badge_deltas(
                 os.path.join(folder, "before.png"),
                 os.path.join(folder, "after.png"),
-                self.Rect(20, 20, 60, 60), scale=2.0)
-        self.assertLess(corner, mac_smoke.PIXEL_NOISE)
-        self.assertGreater(centre, 100)
+                self.Rect(20, 20, 60, 60), 2.0, self.art())
+        self.assertLess(invisible, mac_smoke.SQUARE_VISIBLE)
+        self.assertGreater(mark, 100)
+
+    def test_the_masks_never_overlap(self):
+        """A pixel cannot be both the mark and the space around it, and the
+        soft edge between them belongs to neither."""
+        invisible, mark = mac_smoke.badge_masks(self.art(), 1.0)
+        both = [1 for a, b in zip(invisible.getdata(), mark.getdata()) if a and b]
+        self.assertEqual([], both)
+        self.assertTrue(any(invisible.getdata()), "nothing to check for a square")
+        self.assertTrue(any(mark.getdata()), "nothing to check for a mark")
 
 
 @unittest.skipIf(Image is None, "Pillow is not installed on this machine")

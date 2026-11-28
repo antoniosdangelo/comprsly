@@ -67,9 +67,9 @@ BACKEND = os.path.normpath(os.path.join(HERE, "..", "backend"))
 sys.path.insert(0, BACKEND)
 
 try:
-    from PIL import Image, ImageChops, ImageStat
+    from PIL import Image, ImageChops, ImageFilter, ImageStat
 except Exception:          # pragma: no cover - checked below, not assumed
-    Image = ImageChops = ImageStat = None
+    Image = ImageChops = ImageFilter = ImageStat = None
 
 # Three mistakes the rules engine definitely catches: a lowercase "i", a
 # repeated word, and a misspelling. Deliberately not a filler phrase, because
@@ -85,6 +85,21 @@ PASS, BLOCKED, FAILED, UNKNOWN = "PASS", "BLOCKED", "FAILED", "UNKNOWN"
 # channel difference, 0..255. Antialiasing and PNG rounding sit near zero; a
 # badge drawn over the area moves it by tens.
 PIXEL_NOISE = 6
+
+# And how much the pixels that are SUPPOSED to be invisible may move before
+# the square is really being drawn. Measured on the three rungs of one CI run,
+# over the pixels the badge's own artwork leaves fully transparent:
+#
+#     clear    10.2     the badge as it should look
+#     alpha   214.7     a faint square
+#     opaque  232.9     a solid one
+#
+# A factor of twenty, so this sits far above a correct badge and far below a
+# wrong one. The 10.2 is not noise: it is the mark's own soft edge bleeding
+# one pixel past where the reference image says it ends, which is exactly the
+# anti-aliasing macOS is NOT asked to flatten away, and is why the old method
+# of sampling the box corners read a perfectly good badge as a square.
+SQUARE_VISIBLE = 40
 
 
 def run(args, timeout=60, stdin_text=None):
@@ -175,28 +190,37 @@ def classify_typed(expected, actual):
         len(actual), actual[:80])
 
 
-def classify_badge(mode, corner_delta, centre_delta, noise=PIXEL_NOISE):
-    """Did the badge draw, and are the corners of its square really gone.
+def classify_badge(mode, invisible_delta, mark_delta, noise=PIXEL_NOISE,
+                   limit=SQUARE_VISIBLE):
+    """Did the badge draw, and is everything around it really invisible.
 
-    `mode` is what platform_mac/window.py's ladder reported it achieved. It is
-    used to tell two different wrongs apart, which is the whole point: falling
-    back to `alpha` is a known, documented rung of that ladder and shows a
-    faint square, while claiming `keyed` and still painting the corners is the
-    bug that shipped the first time and must never read as a pass again.
+    The two numbers come from the badge's own artwork rather than from a guess
+    at its shape: every pixel the picture leaves fully transparent has to look
+    the same as it did a moment earlier, and the pixels the mark fills have to
+    look different. The first version of this sampled the four corners of the
+    38x38 box, which read a perfectly good badge as a square, because the heat
+    dot sits IN the bottom right corner and the mark's anti-aliased edge
+    reaches the others.
+
+    `mode` is what platform_mac/window.py's ladder reported it achieved, and
+    it tells two different wrongs apart: falling back to `alpha` is a known,
+    documented rung and shows a faint square, while claiming to be clear and
+    still painting the square is the bug that shipped the first time and must
+    never read as a pass again.
     """
-    if centre_delta <= noise:
+    if mark_delta <= noise:
         return FAILED, "nothing was drawn there: the badge never appeared"
-    if corner_delta <= noise:
-        return PASS, ("drawn, and the square around the circle is invisible "
-                      "(corners moved %.1f, the mark moved %.1f)"
-                      % (corner_delta, centre_delta))
-    if mode in ("keyed", "clear", "clear-but-painted-over"):
-        return FAILED, ("the window reported '%s' and its corners still "
-                        "changed by %.1f, so the square is being drawn"
-                        % (mode, corner_delta))
+    if invisible_delta <= limit:
+        return PASS, ("drawn, and everything around the mark is invisible "
+                      "(it moved %.1f, the mark moved %.1f)"
+                      % (invisible_delta, mark_delta))
+    if mode in ("keyed", "clear", "clear-but-painted-over", "clear-but-undrawn"):
+        return FAILED, ("the window reported '%s' and the pixels around the "
+                        "mark still changed by %.1f, so the square is being "
+                        "drawn" % (mode, invisible_delta))
     return BLOCKED, ("the transparency ladder fell back to '%s', so the square "
-                     "around the badge is visible (corners moved %.1f)"
-                     % (mode, corner_delta))
+                     "around the badge is visible (it moved %.1f)"
+                     % (mode, invisible_delta))
 
 
 def classify_focus(frontmost_before, frontmost_after):
@@ -234,31 +258,42 @@ def mean_delta(a, b, box):
     return sum(bands) / float(len(bands))
 
 
-def badge_deltas(before_png, after_png, rect, scale):
-    """How much the badge's corners and its middle changed. (corner, centre).
+def badge_masks(art, scale):
+    """Which pixels of the badge must stay invisible, and which must not.
 
-    The badge is a circle drawn inside a square window. Everything outside the
-    circle is meant to be invisible, so the four corners should look exactly
-    as the screen did a moment earlier, and the middle should not.
+    Built from the picture the app actually draws, so no assumption about the
+    badge being a circle, or about where the heat dot sits, is baked in here.
+    Eroded by a pixel so that the soft edge between the two, which belongs to
+    neither, cannot be counted as either.
+    """
+    alpha = art.convert("RGBA").split()[3]
+    size = (max(1, int(round(art.width * scale))),
+            max(1, int(round(art.height * scale))))
+    invisible = alpha.point(lambda v: 255 if v == 0 else 0)
+    mark = alpha.point(lambda v: 255 if v >= 250 else 0)
+    return (invisible.filter(ImageFilter.MinFilter(3)).resize(size, Image.NEAREST),
+            mark.filter(ImageFilter.MinFilter(3)).resize(size, Image.NEAREST))
+
+
+def badge_deltas(before_png, after_png, rect, scale, art):
+    """How much the invisible part and the mark changed. (invisible, mark).
+
+    `art` is the badge image the app draws, which is where both masks come
+    from. Nothing here knows or cares what shape the badge is.
     """
     with Image.open(before_png) as before_img, Image.open(after_png) as after_img:
-        before = before_img.convert("RGB")
-        after = after_img.convert("RGB")
-        left, top = int(rect.left * scale), int(rect.top * scale)
-        size = int((rect.right - rect.left) * scale)
-        patch = max(2, size // 6)
-        corners = [
-            (left, top, left + patch, top + patch),
-            (left + size - patch, top, left + size, top + patch),
-            (left, top + size - patch, left + patch, top + size),
-            (left + size - patch, top + size - patch, left + size, top + size),
-        ]
-        corner = max(mean_delta(before, after, box) for box in corners)
-        inset = size // 4
-        centre = mean_delta(before, after,
-                            (left + inset, top + inset,
-                             left + size - inset, top + size - inset))
-        return corner, centre
+        box = (int(rect.left * scale), int(rect.top * scale),
+               int(rect.left * scale) + int((rect.right - rect.left) * scale),
+               int(rect.top * scale) + int((rect.bottom - rect.top) * scale))
+        before = before_img.convert("RGB").crop(box)
+        after = after_img.convert("RGB").crop(box)
+        diff = ImageChops.difference(after, before).convert("L")
+        invisible, mark = badge_masks(art, scale)
+        if invisible.size != diff.size:
+            invisible = invisible.resize(diff.size, Image.NEAREST)
+            mark = mark.resize(diff.size, Image.NEAREST)
+        return (ImageStat.Stat(diff, invisible).mean[0],
+                ImageStat.Stat(diff, mark).mean[0])
 
 
 def changed_box(before_png, after_png, ignore_top=0, ignore_bottom=0,
@@ -279,9 +314,8 @@ def changed_box(before_png, after_png, ignore_top=0, ignore_bottom=0,
                                      after_img.convert("RGB")).convert("L")
         mask = diff.point(lambda v: 255 if v >= threshold else 0)
         if ignore_top or ignore_bottom:
-            blank = Image.new("L", (mask.width, max(ignore_top, 1)), 0)
             if ignore_top:
-                mask.paste(blank, (0, 0))
+                mask.paste(Image.new("L", (mask.width, ignore_top), 0), (0, 0))
             if ignore_bottom:
                 mask.paste(Image.new("L", (mask.width, ignore_bottom), 0),
                            (0, mask.height - ignore_bottom))
@@ -429,15 +463,20 @@ def main():
     r = Report()
     shots = [0]
 
+    def capture(path):
+        """A full screen capture, with no verdict. Returns (state, why)."""
+        code, text = run(["screencapture", "-x", "-t", "png", path], timeout=60)
+        state, why = classify_screenshot(code, path)
+        if text.strip():
+            r.note("    screencapture said: %s" % text.strip())
+        return state, why
+
     def shot(label):
         """A full screen capture. Returns its path, or None if it was refused."""
         shots[0] += 1
         path = os.path.join(out, "%02d-%s.png" % (shots[0], label))
-        code, text = run(["screencapture", "-x", "-t", "png", path], timeout=60)
-        state, why = classify_screenshot(code, path)
+        state, why = capture(path)
         r.verdict("screenshot %s" % label, state, why)
-        if text.strip():
-            r.note("    screencapture said: %s" % text.strip())
         return path if state == PASS else None
 
     def finish(code):
@@ -491,9 +530,12 @@ def main():
 
     import platform_mac
     from platform_mac import accessibility, input as mac_input
+    import badge_art
     import mac_badge
     import suggestion_engine
     from main_mac import TEXT_ROLES
+
+    mac_badge.configure_art()
 
     if not platform_mac.available():
         r.verdict("pyobjc for this script", FAILED,
@@ -587,6 +629,15 @@ def main():
     r.note("  what follows is a measurement rather than the window's own")
     r.note("  opinion of itself.")
     points = display_width_points()
+    # The exact picture the app draws: same module, same size, same count.
+    # Both masks come from its alpha, so nothing below assumes the badge is a
+    # circle or knows where the heat dot sits.
+    art = badge_art.make_heat_badge_image(
+        mac_badge.BADGE_SIZE, len(found), checked=True)
+    if art is None:
+        r.note()
+        r.note("  the badge artwork could not be built here, so the measurement")
+        r.note("  below has nothing to compare against")
 
     def run_the_badge(prefer, label):
         """Launch the app, let it draw, and measure. Returns a dict."""
@@ -605,12 +656,38 @@ def main():
             if not line:
                 break
             said.append(line.rstrip())
-            if line.startswith("tk says the badge is at:"):
+            # The LAST line the badge prints, so waiting for it means the
+            # window is up and whatever is going to draw has been attached.
+            # Waiting for an earlier line is what made one run in three
+            # photograph the moment before the badge appeared.
+            if line.startswith("appkit says the badge is:"):
                 break
             if line.startswith("transparency:"):
                 mode = line.split(":", 1)[1].strip()
-        time.sleep(2)              # let it paint before the shutter
-        after_png = shot("%s-drawn" % label)
+        after_png = None
+        shots[0] += 1
+        path = os.path.join(out, "%02d-%s-drawn.png" % (shots[0], label))
+        state = why = None
+        # Even after it says it has drawn, the window server has its own
+        # frame to get through. Re-shot rather than slept at once, so a run
+        # that is simply slow is not reported as a badge that never appeared.
+        for attempt in range(5):
+            time.sleep(0.5)
+            state, why = capture(path)
+            if state != PASS:
+                break
+            after_png = path
+            if points and art is not None:
+                with Image.open(path) as img:
+                    scale = img.width / points
+                if badge_deltas(before_png, path, where, scale, art)[1] > PIXEL_NOISE:
+                    break
+            else:
+                break
+        if attempt:
+            r.note("    the badge took %.1fs to reach the screen after it said"
+                   " it had drawn" % ((attempt + 1) * 0.5))
+        r.verdict("screenshot %s-drawn" % label, state, why)
         front_now = accessibility.frontmost()
         try:
             watcher.wait(timeout=40)
@@ -619,13 +696,13 @@ def main():
         said += [l.rstrip() for l in (watcher.stdout.read() or "").splitlines()]
         found = {"mode": mode, "said": said, "before": before_png,
                  "after": after_png, "front": front_now[2] if front_now else None,
-                 "corner": None, "centre": None, "box": None, "scale": 1.0}
-        if before_png and after_png and points:
+                 "invisible": None, "mark": None, "box": None, "scale": 1.0}
+        if before_png and after_png and points and art is not None:
             with Image.open(after_png) as img:
                 scale = img.width / points
             found["scale"] = scale
-            found["corner"], found["centre"] = badge_deltas(
-                before_png, after_png, where, scale)
+            found["invisible"], found["mark"] = badge_deltas(
+                before_png, after_png, where, scale, art)
             # Everything that changed anywhere on screen, so "it drew in the
             # wrong place" cannot be mistaken for "it never drew". The menu
             # bar is excluded because its clock ticks, and the Dock because
@@ -653,12 +730,15 @@ def main():
         r.note()
         r.note("  display is %d points wide and the screenshot is %.0fx that"
                % (points, first["scale"]))
-        r.note("  corners moved %.1f, the mark itself moved %.1f (0-255)"
-               % (first["corner"], first["centre"]))
+        r.note("  the pixels that should be invisible moved %.1f, and the"
+               % first["invisible"])
+        r.note("  mark itself moved %.1f. Anything over %d is a square being"
+               % (first["mark"], SQUARE_VISIBLE))
+        r.note("  drawn; a correct badge measured 10.2 and a faint square 215.")
         r.note("  anything at all changed on screen, outside the menu bar and")
         r.note("  the Dock: %s" % (describe_box(first["box"], first["scale"])))
         r.verdict("the real badge draws as a circle",
-                  *classify_badge(first["mode"], first["corner"], first["centre"]))
+                  *classify_badge(first["mode"], first["invisible"], first["mark"]))
         zoom = os.path.join(out, "badge-zoom.png")
         try:
             crop_badge(first["after"], where, first["scale"], zoom)
@@ -688,15 +768,15 @@ def main():
                 r.note("    %s" % line)
         focus_state, focus_why = classify_focus(front_before, result["front"])
         r.note("    focus: [%s] %s" % (focus_state, focus_why))
-        if result["centre"] is None:
+        if result["mark"] is None:
             r.note("    nothing to measure")
             continue
-        r.note("    corners moved %.1f, the mark moved %.1f"
-               % (result["corner"], result["centre"]))
+        r.note("    invisible pixels moved %.1f, the mark moved %.1f"
+               % (result["invisible"], result["mark"]))
         r.note("    changed on screen: %s"
                % describe_box(result["box"], result["scale"]))
-        verdict, why = classify_badge(result["mode"], result["corner"],
-                                      result["centre"])
+        verdict, why = classify_badge(result["mode"], result["invisible"],
+                                      result["mark"])
         r.note("    would have been: [%s] %s" % (verdict, why))
     # ---- 7. the corrected text, written back into the box
     r.section("7. The correction, applied in place")

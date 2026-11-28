@@ -148,8 +148,19 @@ sends the right one.
 
 ## The four questions, and who can still answer them
 
-1. **Does the badge render as a circle, or as a square?** *Being answered by
-   CI, by measurement.* The first run of the real badge drew **nothing at
+1. **Does the badge render as a circle, or as a square?** *A circle.* It
+   draws as the real mark on a transparent background, with the heat ring,
+   at the bottom right of the text box. Measured over the pixels the artwork
+   leaves fully transparent: the badge moved them 10.2 out of 255, where the
+   same run's faint square measured 214.7 and a solid one 232.9.
+
+   That measurement replaced one that sampled the four corners of the badge's
+   box and called a perfectly good badge a square. Both reasons were the
+   artwork's own doing rather than noise: the heat dot sits IN the bottom
+   right corner, and the mark's anti-aliased edge reaches the other three,
+   which is exactly the softness macOS is deliberately not asked to flatten.
+
+   *Previously answered by measurement:* The first run of the real badge drew **nothing at
    all**: the rectangle it belongs in was byte identical before and after,
    while the app reported `transparency: keyed` and a window it believed was
    on screen. That is the vanishing this page has warned about since it was
