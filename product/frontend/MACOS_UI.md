@@ -1,6 +1,7 @@
 # The Mac UI: what carries over, and what does not
 
-Written 2026-11-26 alongside the macOS layer. **None of this has run on a Mac.**
+Written 2026-11-26 alongside the macOS layer. Updated 2026-11-28, when the
+badge first drew on a real Mac.
 
 ## The good news is most of it
 
@@ -34,11 +35,26 @@ guess, because the macOS replacement is genuinely disputed:
 | `alpha` | acceptable: a faint square, badge still usable |
 | `opaque` | wrong: the square is visible, and we say so rather than pretend |
 
-Community reports on the macOS path disagree. Some say `-transparent` plus a
-`systemTransparent` background works and also drops the window shadow; others
-report the window flashing at launch and then disappearing. **That is why it is
-isolated behind one function with a fallback instead of sprinkled through the
-badge code**, and why it is the first thing to look at on a real Mac.
+### The ladder has to reach the widgets inside, not just the window
+
+Found on 2026-11-28, from the first CI screenshot. The run reported
+`transparency: keyed` and the picture was a dark rectangle with a sliver of
+purple in it. **Both were true.** `-transparent` was accepted on the toplevel,
+and the Canvas inside it had a solid `-background` and was drawn straight over
+the top. A transparent window with an opaque child is an opaque badge.
+
+So `badge_background(mode, key_color)` now says what every widget inside the
+badge must paint: `systemTransparent` when the Mac keyed successfully, the key
+colour anywhere else. On Windows the key colour **is** the transparency, so the
+same function gives the right answer there without a branch at the call site.
+
+### And the badge's own picture is not the same picture on both
+
+`badge_art.flatten_for_colorkey` throws the alpha channel away and paints the
+key colour wherever the mark was transparent. That is exactly right for
+`-transparentcolor`, which deletes one exact shade, and it is exactly wrong on
+a Mac, which composites real alpha and would simply be handed a solid square.
+Flattening is a parameter now: Windows asks for it, macOS does not.
 
 ## Two smaller differences, handled
 
@@ -50,15 +66,36 @@ documented way to float without stealing focus.
 **Paste.** macOS is Command+V, not Control+V. `platform_mac/input.py` already
 sends the right one.
 
-## What needs a human, not a test
+## The four questions, and who can still answer them
 
-1. Does the badge render as a circle, or as a square?
-2. Does it steal focus when it appears while you are typing?
-3. On a multi display Mac, is the badge where it should be? The Accessibility
-   API reports coordinates from the top left of the primary display, which is
-   what the shared geometry expects, but a second display above or to the left
-   of the primary is exactly where that assumption breaks.
-4. Does the review card open near the badge, or somewhere else?
+1. **Does the badge render as a circle, or as a square?** *Answered by CI, by
+   measurement.* The smoke run screenshots the badge's exact rectangle before
+   and after it appears and compares the corners. Unchanged corners mean the
+   square really is invisible. A window that claims `keyed` while its corners
+   change is a FAILED verdict, not a pass, which is the specific way this went
+   wrong the first time.
+2. **Does it steal focus when it appears while you are typing?** *Answered by
+   CI.* The run reads the frontmost application before and after the badge
+   appears and fails if it moved.
+3. **On a multi display Mac, is the badge where it should be?** **Still needs
+   you.** The runner has one display. The Accessibility API reports coordinates
+   from the top left of the primary display, which is what the shared geometry
+   expects, and a second display above or to the left of the primary is exactly
+   where that assumption breaks. This one will look mysterious rather than
+   obviously broken.
+4. **Does the review card open near the badge?** **There is no review card on
+   macOS yet.** It is `SuggestionPopup` in `main.py`, 1,450 lines wound through
+   Win32 focus restore and per-site window measurement, and porting it is its
+   own piece of work. `main_mac.py --fix-once` is the half of it that needs no
+   window: read the box, run the rules, write the result back. The smoke run
+   drives that, so the correction can be seen landing in a real TextEdit window
+   even though the panel that would offer it does not exist.
 
-The first is most likely to be wrong. The third is the one that will look
-mysterious rather than obviously broken.
+## Sizes are converted, not measured
+
+macOS works in points and Windows in physical pixels. The badge was approved at
+58 px on a 144 DPI laptop panel, which is 38.7 points of the same physical
+size, so `mac_badge.BADGE_SIZE` is 38 and `BADGE_INSET` is 11 by the same
+arithmetic. Both are a conversion of a number Antonio approved on a screen he
+was looking at, not a number anyone has seen on a Mac. They are the first thing
+to adjust when he does.

@@ -1,63 +1,90 @@
-"""Run the Mac build on a machine nobody owns, and report what truly happened.
+"""Drive the Mac build on a machine nobody owns, and measure what happened.
 
 Antonio wants to see the Mac app behave before paying to rent a Mac. A GitHub
-macos runner is the only Mac available, so this drives the built .app there and
-writes down what worked, what was blocked by macOS privacy, and what actually
-broke. Those three are different things and the whole point of this script is
-that it never lets one read as another.
+macos runner is the only Mac available, so this drives the built .app there,
+puts a sentence with mistakes into a real TextEdit window, and watches the
+product do its job.
+
+    python mac_smoke.py --app <path to Comprsly.app> --out <directory>
 
 What it does, in order:
 
     1. writes down the machine: macOS version, SIP state, display, user
-    2. reads the Accessibility grant state, without trying to forge one
-    3. opens TextEdit with some typed text to be the app under observation
-    4. runs the .app's own --check, and the source tree's --check too
-    5. draws the badge window, so the circle and the transparency can be seen
-    6. puts the caret in TextEdit's text area and runs --check again
-    7. screenshots each of those moments
+    2. runs the .app's own --check, which is also the Accessibility answer
+    3. opens TextEdit on an empty file and waits for the caret to land
+    4. types a sentence with three mistakes in it, through the product's own
+       pasteboard and Command+V path, and reads it back to prove it arrived
+    5. asks the real rules engine what it makes of that sentence
+    6. launches the built .app, which draws the REAL badge on the text box,
+       and MEASURES the badge in a screenshot
+    7. runs the .app's --fix-once, which corrects the sentence in place, and
+       reads the box back to prove the correction really landed
     8. writes smoke-report.txt with a verdict per capability
 
-On granting Accessibility: there is no supported way to do it from code. Apple
-provides no API, `tccutil` can only reset permissions and never grant them, and
-the only method that works is writing rows into the system TCC database, which
-Apple's developer support calls unsupported and which is exactly the hack we
-were told not to do. The runner image itself pre-grants Accessibility to bash,
-osascript and Terminal, so a process the job starts may inherit it through its
-responsible parent. That is the only route tried here: ask, and report the
-answer. A refusal is recorded as BLOCKED and never as a pass.
+## Three things this version does differently, each for a reason the last run
+## gave us
 
-    python mac_smoke.py --app <path to Comprsly.app> --out <directory>
+**No Apple Events.** The previous version drove TextEdit with
+`tell application "TextEdit"`, which needs Automation permission. The first
+real run hung for thirty seconds on the permission prompt and then left a
+"Don't Allow" dialog sitting on top of the screen, in every later screenshot.
+Everything here is either a shell command (`open`) or a synthetic event posted
+through Quartz, which needs Accessibility, and Accessibility the runner image
+already grants.
 
-Exit code is 0 when the run completed, whatever the verdicts were, because a
-blocked permission is a finding and not a failure of this script. It is 1 only
-when the run could not be carried out, for example when the .app is not there.
+**It does not trust what the window says about itself.** The first run
+reported `transparency: keyed` and the screenshot showed a dark rectangle.
+Both were true: the attribute was accepted, and the widget inside the window
+was still opaque and drawn straight over it. So the badge is measured now, by
+screenshotting its exact rectangle before and after it appears. Corners
+unchanged means the square really is invisible; a window that claims "keyed"
+while its corners change is a FAILED, not a pass.
+
+**A BLOCKED verdict fails the run.** It used to exit 0, because the
+expectation was a page of refused permissions. The runner turned out to grant
+both Accessibility and Screen Recording, so every verdict here can genuinely
+pass, and anything less is worth stopping for. Pass --allow-blocked on a real
+Mac where the human has not ticked the Accessibility box.
+
+## What is NOT covered
+
+**The review card.** macOS does not have one yet: it is SuggestionPopup in
+main.py, 1,450 lines wound through Win32 focus restore and per-site window
+measurement. `--fix-once` exercises the half of it that does not need a
+window, which is why there is a corrected-text screenshot and no card
+screenshot. The report says so rather than photographing something that stands
+in for it.
 """
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.normpath(os.path.join(HERE, "..", "backend"))
+sys.path.insert(0, BACKEND)
 
-TYPED_TEXT = (
-    "Comprsly smoke test. This sentence is deliberately wordy and repetitive "
-    "and says the same thing more than once so that there is something here "
-    "worth compressing, which is the whole job of the product."
-)
+try:
+    from PIL import Image, ImageChops, ImageStat
+except Exception:          # pragma: no cover - checked below, not assumed
+    Image = ImageChops = ImageStat = None
 
-# A screenshot of a screen that the capture was not allowed to see comes back
-# as a single flat colour, and PNG squeezes a flat image down to almost
-# nothing. There is no image library in the Mac requirements and decoding a PNG
-# by hand to measure its variance is far more code than this is worth.
-# shortcut: size only, so a genuinely blank desktop could read as blocked,
-# upgrade to a pixel check if Pillow ever joins requirements-mac.txt.
-BLANK_SCREENSHOT_BYTES = 40_000
+# Three mistakes the rules engine definitely catches: a lowercase "i", a
+# repeated word, and a misspelling. Deliberately not a filler phrase, because
+# which fillers are worth removing is a judgement that changes, and this
+# sentence is here to prove the loop runs rather than to pin the rules.
+TYPED_TEXT = ("i think we should basically just go ahead and and update teh "
+              "readme file, if that makes sense.")
 
 PASS, BLOCKED, FAILED, UNKNOWN = "PASS", "BLOCKED", "FAILED", "UNKNOWN"
+
+# How different two crops of the same rectangle have to be before the
+# difference is the badge rather than the screen's own noise. Mean absolute
+# channel difference, 0..255. Antialiasing and PNG rounding sit near zero; a
+# badge drawn over the area moves it by tens.
+PIXEL_NOISE = 6
 
 
 def run(args, timeout=60, stdin_text=None):
@@ -77,13 +104,9 @@ def run(args, timeout=60, stdin_text=None):
     return done.returncode, (done.stdout or "") + (done.stderr or "")
 
 
-def osascript(script, timeout=30):
-    return run(["osascript", "-e", script], timeout=timeout)
-
-
 # ---------------------------------------------------------------- verdicts
-# These four are the only decisions this script makes, so they are pure
-# functions of their inputs and they are unit tested. Everything else is
+# These are the only decisions this script makes, so they are pure functions
+# of their inputs and they are unit tested on Windows. Everything else is
 # plumbing that only a Mac can run.
 
 def classify_check(code, text):
@@ -111,54 +134,142 @@ def classify_check(code, text):
 
 
 def classify_screenshot(code, path):
-    """Whether we really got a picture of the screen."""
+    """Whether we really got a picture of the screen.
+
+    Screen Recording refused gives a black frame. That used to be judged by
+    file size, because the Mac dependencies had no image library; Pillow is in
+    them now, since the badge is a PIL image, so the pixels are counted and
+    the guess is gone.
+    """
     if code == 127:
         return FAILED, "screencapture is not on this machine"
     if code != 0 or not os.path.isfile(path):
         return BLOCKED, "screencapture refused; Screen Recording is not granted"
-    size = os.path.getsize(path)
-    if size == 0:
+    if os.path.getsize(path) == 0:
         return BLOCKED, "wrote an empty file"
-    if size < BLANK_SCREENSHOT_BYTES:
+    if Image is None:
+        return UNKNOWN, "%d bytes, and no Pillow here to look inside it" % (
+            os.path.getsize(path))
+    try:
+        with Image.open(path) as img:
+            colors = img.convert("RGB").getcolors(maxcolors=64)
+    except Exception as exc:
+        return FAILED, "the file is not a readable image: %s" % exc
+    if colors is not None and len(colors) < 4:
         return BLOCKED, (
-            "only %d bytes, which is a flat image, so the capture was almost "
-            "certainly a black frame rather than the screen" % size
-        )
-    return PASS, "%d bytes" % size
+            "only %d distinct colours, so this is a flat frame rather than "
+            "the screen" % len(colors))
+    return PASS, "a real picture of the screen"
 
 
-def classify_badge(code, text):
-    """Whether the badge window appeared, and how transparent it managed."""
-    lowered = (text or "").lower()
-    if "no display" in lowered or "couldn't connect to display" in lowered:
-        return BLOCKED, "no window server session, so no window could be made"
-    if "modulenotfounderror" in lowered and "tkinter" in lowered:
-        return FAILED, "this Python has no tkinter, so the badge cannot draw"
-    if "traceback (most recent call last)" in lowered:
-        return FAILED, "drawing the badge raised"
-    for mode, meaning in (
-        ("transparency: keyed", "the square around the circle is invisible"),
-        ("transparency: alpha", "fell back to window alpha; the square is faint"
-                                " but present"),
-        ("transparency: opaque", "neither worked; the badge shows a dark square"),
-    ):
-        if mode in lowered:
-            return (PASS if "keyed" in mode else BLOCKED), meaning
-    if code != 0:
-        return FAILED, "exit code %s" % code
-    return UNKNOWN, "the badge said nothing about its transparency"
+def classify_typed(expected, actual):
+    """Whether the sentence we sent is the sentence that arrived."""
+    if actual is None:
+        return FAILED, "the text box could not be read back"
+    if actual == expected:
+        return PASS, "all %d characters arrived" % len(expected)
+    if expected in actual:
+        return PASS, "arrived, alongside %d characters already in the box" % (
+            len(actual) - len(expected))
+    return FAILED, "the box holds %d characters and not the sentence: %r" % (
+        len(actual), actual[:80])
 
 
-def classify_automation(code, text):
-    """Whether we were allowed to drive another app at all."""
-    lowered = (text or "").lower()
-    if "not authorized" in lowered or "-1743" in lowered or "1743" in lowered:
-        return BLOCKED, "macOS withheld Automation, so TextEdit cannot be driven"
-    if code == 124:
-        return BLOCKED, "the script hung, which is what a silent prompt looks like"
-    if code != 0:
-        return FAILED, "osascript exit code %s: %s" % (code, (text or "").strip()[:200])
-    return PASS, "TextEdit accepted the instruction"
+def classify_badge(mode, corner_delta, centre_delta, noise=PIXEL_NOISE):
+    """Did the badge draw, and are the corners of its square really gone.
+
+    `mode` is what platform_mac/window.py's ladder reported it achieved. It is
+    used to tell two different wrongs apart, which is the whole point: falling
+    back to `alpha` is a known, documented rung of that ladder and shows a
+    faint square, while claiming `keyed` and still painting the corners is the
+    bug that shipped the first time and must never read as a pass again.
+    """
+    if centre_delta <= noise:
+        return FAILED, "nothing was drawn there: the badge never appeared"
+    if corner_delta <= noise:
+        return PASS, ("drawn, and the square around the circle is invisible "
+                      "(corners moved %.1f, the mark moved %.1f)"
+                      % (corner_delta, centre_delta))
+    if mode == "keyed":
+        return FAILED, ("the window reported 'keyed' and its corners still "
+                        "changed by %.1f, so the square is being drawn"
+                        % corner_delta)
+    return BLOCKED, ("the transparency ladder fell back to '%s', so the square "
+                     "around the badge is visible (corners moved %.1f)"
+                     % (mode, corner_delta))
+
+
+def classify_focus(frontmost_before, frontmost_after):
+    """The badge must never take the caret from what you are typing in."""
+    if frontmost_after is None:
+        return FAILED, "could not read which app is in front"
+    if frontmost_after == frontmost_before:
+        return PASS, "%s still has focus with the badge on screen" % frontmost_after
+    return FAILED, "focus moved from %s to %s when the badge appeared" % (
+        frontmost_before, frontmost_after)
+
+
+def classify_correction(before, after, expected):
+    """Whether the corrected sentence is really in the box now."""
+    if after is None:
+        return FAILED, "the text box could not be read back"
+    if after == before:
+        return FAILED, "the text is unchanged, so nothing was written back"
+    if after == expected:
+        return PASS, "the box holds exactly what the rules produced"
+    return FAILED, "the box changed but not into the corrected sentence: %r" % (
+        after[:80],)
+
+
+# ---------------------------------------------------------------- measuring
+
+def mean_delta(a, b, box):
+    """Mean absolute channel difference between the same patch of two images."""
+    pa = a.crop(box).convert("RGB")
+    pb = b.crop(box).convert("RGB")
+    diff = ImageChops.difference(pa, pb)
+    if not diff.width or not diff.height:
+        return 0.0
+    bands = ImageStat.Stat(diff).mean
+    return sum(bands) / float(len(bands))
+
+
+def badge_deltas(before_png, after_png, rect, scale):
+    """How much the badge's corners and its middle changed. (corner, centre).
+
+    The badge is a circle drawn inside a square window. Everything outside the
+    circle is meant to be invisible, so the four corners should look exactly
+    as the screen did a moment earlier, and the middle should not.
+    """
+    with Image.open(before_png) as before_img, Image.open(after_png) as after_img:
+        before = before_img.convert("RGB")
+        after = after_img.convert("RGB")
+        left, top = int(rect.left * scale), int(rect.top * scale)
+        size = int((rect.right - rect.left) * scale)
+        patch = max(2, size // 6)
+        corners = [
+            (left, top, left + patch, top + patch),
+            (left + size - patch, top, left + size, top + patch),
+            (left, top + size - patch, left + patch, top + size),
+            (left + size - patch, top + size - patch, left + size, top + size),
+        ]
+        corner = max(mean_delta(before, after, box) for box in corners)
+        inset = size // 4
+        centre = mean_delta(before, after,
+                            (left + inset, top + inset,
+                             left + size - inset, top + size - inset))
+        return corner, centre
+
+
+def crop_badge(png, rect, scale, out_path, margin=3):
+    """A zoomed cut of the badge for human eyes, saved beside the report."""
+    with Image.open(png) as shot:
+        cut = shot.crop((int((rect.left - margin) * scale),
+                         int((rect.top - margin) * scale),
+                         int((rect.right + margin) * scale),
+                         int((rect.bottom + margin) * scale)))
+        cut = cut.resize((cut.width * 4, cut.height * 4), Image.NEAREST)
+        cut.save(out_path)
 
 
 # ---------------------------------------------------------------- the run
@@ -167,6 +278,7 @@ class Report:
     def __init__(self):
         self.lines = []
         self.verdicts = []
+        self.missing = []
 
     def note(self, text=""):
         self.lines.append(text)
@@ -182,6 +294,10 @@ class Report:
         self.verdicts.append((what, state, why))
         self.note("  [%s] %s: %s" % (state, what, why))
 
+    def not_covered(self, what, why):
+        self.missing.append((what, why))
+        self.note("  [NOT COVERED] %s: %s" % (what, why))
+
     def command(self, title, args, timeout=60):
         code, text = run(args, timeout=timeout)
         self.note()
@@ -190,89 +306,110 @@ class Report:
             self.note("    %s" % line)
         return code, text
 
+    def worst(self):
+        states = [s for _, s, _ in self.verdicts]
+        for bad in (FAILED, BLOCKED, UNKNOWN):
+            if bad in states:
+                return bad
+        return PASS if states else UNKNOWN
+
     def write(self, path):
-        worst = FAILED if any(s == FAILED for _, s, _ in self.verdicts) else (
-            BLOCKED if any(s == BLOCKED for _, s, _ in self.verdicts) else PASS)
+        worst = self.worst()
         header = [
             "Comprsly macOS smoke run",
             "",
-            "Read the verdicts, not the exit code. BLOCKED means macOS refused a",
-            "permission that only a human sitting at the Mac can give, which is",
-            "the expected answer on a CI runner and is NOT a defect in the app.",
-            "FAILED means something is genuinely wrong with the build.",
+            "Every verdict below is measured, not taken from the thing being",
+            "measured. FAILED means something is wrong with the build. BLOCKED",
+            "means macOS refused a permission, which on this runner should not",
+            "happen and is worth stopping for.",
             "",
             "Worst verdict in this run: %s" % worst,
             "",
         ]
         for what, state, why in self.verdicts:
-            header.append("  %-8s %-34s %s" % (state, what, why))
+            header.append("  %-8s %-36s %s" % (state, what, why))
+        if self.missing:
+            header.append("")
+            header.append("Not covered by this run:")
+            for what, why in self.missing:
+                header.append("  %-36s %s" % (what, why))
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(header + [""] + self.lines) + "\n")
         return worst
 
 
-def badge_window(seconds):
-    """Draw the badge and hold it, so a screenshot can catch it.
+def display_width_points():
+    """How wide the main display is, in points.
 
-    Nothing on macOS draws the badge yet: main_mac.py prints where it would go
-    and the real badge lives in main.py, which imports ctypes.wintypes and
-    cannot be imported here at all. So this is not the product's badge. It is
-    the product's badge geometry and the product's transparency helper, drawn
-    on a real window, which is what makes the two open questions in
-    MACOS_UI.md answerable from a screenshot: is it a circle or a square, and
-    does it float without stealing focus.
+    The Accessibility API reports points and screencapture writes pixels, so
+    one has to be converted before a rectangle from the first can be cropped
+    out of the second. Dividing the screenshot's own width by this gives the
+    scale, which is 2 on a Retina display and 1 everywhere else, without
+    hardcoding either.
     """
-    sys.path.insert(0, BACKEND)
-    import tkinter
-    from platform_mac import window
+    try:
+        import Quartz
+        return float(Quartz.CGDisplayBounds(Quartz.CGMainDisplayID()).size.width)
+    except Exception:
+        return None
 
-    BRAND_DARK = "#0d0d0f"
-    SIZE = 17            # the terminal line height the Windows badge matches
 
-    root = tkinter.Tk()
-    root.overrideredirect(True)
-    root.geometry("%dx%d+%d+%d" % (SIZE, SIZE, 420, 360))
-    mode = window.make_badge_window_transparent(root, BRAND_DARK)
-    floated = window.keep_on_top(root)
-    canvas = tkinter.Canvas(root, width=SIZE, height=SIZE,
-                            highlightthickness=0, bg=BRAND_DARK)
-    canvas.pack()
-    canvas.create_oval(1, 1, SIZE - 1, SIZE - 1, fill="#7c5cff", outline="")
-
-    print("transparency: %s" % mode, flush=True)
-    print("kept on top: %s" % floated, flush=True)
-    root.update()
-    root.after(int(seconds * 1000), root.destroy)
-    root.mainloop()
-    print("badge window closed cleanly", flush=True)
-    return 0
+def wait_for_text_box(accessibility, roles, seconds=20):
+    """Poll until the caret is in a text box. Returns (element, role, rect)."""
+    deadline = time.time() + seconds
+    last_role = None
+    while time.time() < deadline:
+        element = accessibility.focused_element()
+        role = accessibility.element_role(element) if element else None
+        last_role = role or last_role
+        if role in roles:
+            rect = accessibility.element_rect(element)
+            if rect:
+                return element, role, rect
+        time.sleep(0.5)
+    return None, last_role, None
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--app", help="path to the built Comprsly.app")
+    parser.add_argument("--app", required=True, help="path to the built Comprsly.app")
     parser.add_argument("--out", default="smoke-out", help="where to write results")
-    parser.add_argument("--badge-window", type=float, default=None,
-                        help="internal: draw the badge for N seconds and exit")
+    parser.add_argument("--allow-blocked", action="store_true",
+                        help="exit 0 even when macOS refused a permission, for "
+                             "a real Mac where it has not been granted")
     args = parser.parse_args()
-
-    if args.badge_window is not None:
-        return badge_window(args.badge_window)
 
     out = os.path.abspath(args.out)
     os.makedirs(out, exist_ok=True)
-    shots = 0
     r = Report()
+    shots = [0]
 
     def shot(label):
-        nonlocal shots
-        shots += 1
-        path = os.path.join(out, "%02d-%s.png" % (shots, label))
+        """A full screen capture. Returns its path, or None if it was refused."""
+        shots[0] += 1
+        path = os.path.join(out, "%02d-%s.png" % (shots[0], label))
         code, text = run(["screencapture", "-x", "-t", "png", path], timeout=60)
         state, why = classify_screenshot(code, path)
         r.verdict("screenshot %s" % label, state, why)
         if text.strip():
             r.note("    screencapture said: %s" % text.strip())
+        return path if state == PASS else None
+
+    def finish(code):
+        path = os.path.join(out, "smoke-report.txt")
+        worst = r.write(path)
+        print("\nwrote %s (worst verdict: %s)" % (path, worst), flush=True)
+        print(run(["ls", "-la", out])[1], flush=True)
+        if code is not None:
+            return code
+        if worst == PASS:
+            return 0
+        if worst == BLOCKED and args.allow_blocked:
+            print("exiting 0: --allow-blocked was passed", flush=True)
+            return 0
+        return 1
+
+    inner = os.path.join(args.app, "Contents", "MacOS", "Comprsly")
 
     # ---- 1. the machine
     r.section("1. The machine this ran on")
@@ -284,137 +421,200 @@ def main():
     r.command("", ["csrutil", "status"])
     r.command("", ["system_profiler", "SPDisplaysDataType"], timeout=120)
 
-    # ---- 2. the Accessibility grant, read and not forged
-    r.section("2. Accessibility permission")
-    r.note()
-    r.note("  Not attempting to grant this. There is no API for it, tccutil can")
-    r.note("  only reset permissions, and the only thing that works is writing")
-    r.note("  rows into the system TCC database, which Apple calls unsupported.")
-    r.note("  The runner image pre-grants bash and osascript, so a child of the")
-    r.note("  job's shell may inherit the grant. Reading the state below.")
-    code, text = run(
-        ["sqlite3", "-cmd", ".timeout 5000",
-         "/Library/Application Support/com.apple.TCC/TCC.db",
-         "select client, auth_value from access where service="
-         "'kTCCServiceAccessibility';"],
-        timeout=30,
-    )
-    r.note()
-    r.note("  system TCC rows for Accessibility (exit %s):" % code)
-    for line in (text or "").rstrip().splitlines() or ["    (nothing returned)"]:
-        r.note("    %s" % line)
-    if code != 0:
-        r.note("  Could not read the database. That is normal: it needs Full Disk")
-        r.note("  Access. It does not tell us the grant is missing, only that we")
-        r.note("  cannot see it from here. The --check runs below are what count.")
+    if Image is None:
+        r.verdict("Pillow is installed", FAILED,
+                  "no image library, so nothing below could be measured")
+        return finish(1)
+    r.verdict("Pillow is installed", PASS, "the badge can be measured")
 
-    # ---- 3. something to watch
-    r.section("3. TextEdit, with text typed into it")
-    code, text = osascript(
-        'tell application "TextEdit"\n'
-        '  activate\n'
-        '  make new document\n'
-        '  set text of document 1 to "%s"\n'
-        'end tell' % TYPED_TEXT
-    )
-    state, why = classify_automation(code, text)
-    r.verdict("drive TextEdit", state, why)
-    if text.strip():
-        r.note("    osascript said: %s" % text.strip())
-    time.sleep(2)
-    shot("app-started")
+    if not os.path.isfile(inner):
+        r.verdict("the .app exists", FAILED, "no executable at %s" % inner)
+        return finish(1)
+    r.verdict("the .app exists", PASS, inner)
 
-    # ---- 4. the app's own diagnosis
-    r.section("4. Comprsly's own --check")
-    if args.app:
-        inner = os.path.join(args.app, "Contents", "MacOS", "Comprsly")
-        if not os.path.isfile(inner):
-            r.verdict("the .app exists", FAILED, "no executable at %s" % inner)
-            r.write(os.path.join(out, "smoke-report.txt"))
-            return 1
-        r.verdict("the .app exists", PASS, inner)
-        r.note()
-        r.note("  Running the binary inside the bundle rather than `open`, because")
-        r.note("  the bundle is LSUIElement with console=False and `open` throws")
-        r.note("  its output away. One consequence worth knowing: launched this")
-        r.note("  way the responsible process for permissions is the shell, not")
-        r.note("  Comprsly.app, so this says whether the CODE works, not what a")
-        r.note("  user sees before they grant anything.")
-        code, text = r.command("", [inner, "--check"], timeout=120)
-        state, why = classify_check(code, text)
-        r.verdict("the built .app can see a text box", state, why)
+    # ---- 2. what the app says about this machine
+    r.section("2. Comprsly's own --check, from the built bundle")
+    r.note()
+    r.note("  Running the binary inside the bundle rather than `open`, because")
+    r.note("  the bundle is LSUIElement with console=False and `open` throws")
+    r.note("  its output away. One consequence worth knowing: launched this")
+    r.note("  way the responsible process for permissions is the shell, not")
+    r.note("  Comprsly.app, so this says whether the CODE works, not what a")
+    r.note("  user sees before they grant anything.")
+    code, text = r.command("", [inner, "--check"], timeout=120)
+    r.verdict("the built .app can see a text box", *classify_check(code, text))
+
+    import platform_mac
+    from platform_mac import accessibility, input as mac_input
+    import mac_badge
+    import suggestion_engine
+    from main_mac import TEXT_ROLES
+
+    if not platform_mac.available():
+        r.verdict("pyobjc for this script", FAILED,
+                  "the smoke run's own Python cannot reach the Mac APIs")
+        return finish(1)
+
+    # ---- 3. a real text box
+    r.section("3. A TextEdit window with the caret in it")
+    r.note()
+    r.note("  `open` goes through Launch Services, not Apple Events, so it")
+    r.note("  cannot raise the Automation prompt that hung the last run. An")
+    r.note("  empty file is passed so TextEdit opens a document rather than")
+    r.note("  its file chooser.")
+    scratch = os.path.join(out, "comprsly-smoke.txt")
+    with open(scratch, "w", encoding="utf-8") as handle:
+        handle.write("")
+    code, text = r.command("", ["open", "-a", "TextEdit", scratch], timeout=60)
+    r.verdict("TextEdit opens",
+              PASS if code == 0 else FAILED,
+              "opened %s" % os.path.basename(scratch) if code == 0
+              else (text or "").strip()[:200])
+    element, role, text_rect = wait_for_text_box(accessibility, TEXT_ROLES)
+    if text_rect is None:
+        r.verdict("the caret lands in a text box", FAILED,
+                  "after 20s the focused control was %s" % role)
+        shot("no-text-box")
+        return finish(1)
+    r.verdict("the caret lands in a text box", PASS,
+              "%s at %s" % (role, (text_rect,)))
+    shot("textedit-open")
+
+    front = accessibility.frontmost()
+    front_before = front[2] if front else None
+
+    # ---- 4. typing, through the product's own input path
+    r.section("4. A sentence with three mistakes, typed in")
+    r.note()
+    r.note("  Sent with platform_mac/input.py: the text goes on the pasteboard")
+    r.note("  and Command+A, Command+V are posted as real CGEvents. That is the")
+    r.note("  product's own apply path, and it needs Accessibility rather than")
+    r.note("  Automation, so nothing here can raise a permission prompt.")
+    r.note()
+    r.note("  typing: %s" % TYPED_TEXT)
+    snapshot = mac_input.snapshot_clipboard()
+    try:
+        mac_input.set_clipboard_text(TYPED_TEXT)
+        sent = mac_input.send_select_all_and_paste()
+        time.sleep(1.5)
+        arrived = accessibility.read_text(element)
+    finally:
+        mac_input.restore_clipboard(snapshot)
+    if not sent:
+        r.verdict("the sentence is typed in", FAILED,
+                  "Quartz would not post the keystrokes")
     else:
-        r.verdict("the built .app can see a text box", UNKNOWN, "no --app given")
+        r.verdict("the sentence is typed in", *classify_typed(TYPED_TEXT, arrived))
+    shot("typed")
 
+    # ---- 5. what the rules make of it
+    r.section("5. What the rules engine finds in it")
+    found = suggestion_engine.analyze(TYPED_TEXT)["suggestions"]
+    corrected = suggestion_engine.apply_suggestions(TYPED_TEXT, found)
     r.note()
-    r.note("  The same check from the source tree, for comparison.")
-    code, text = r.command("", [sys.executable, "main_mac.py", "--check"], timeout=120)
-    # main_mac.py resolves its imports relative to itself, so it has to run
-    # from its own directory.
-    if code == 127 or "No such file" in (text or ""):
-        code, text = run([sys.executable, os.path.join(BACKEND, "main_mac.py"),
-                          "--check"], timeout=120)
-        for line in (text or "").rstrip().splitlines():
-            r.note("    %s" % line)
-    state, why = classify_check(code, text)
-    r.verdict("the source tree can see a text box", state, why)
+    for s in found:
+        r.note("    %-28s %r -> %r" % (s["label"], s["original"], s["replacement"]))
+    r.note()
+    r.note("  corrected: %s" % corrected)
+    r.verdict("the rules find the mistakes",
+              PASS if found and corrected != TYPED_TEXT else FAILED,
+              "%d suggestion(s), and they change the text" % len(found)
+              if found and corrected != TYPED_TEXT
+              else "%d suggestion(s), text unchanged" % len(found))
 
-    # ---- 5. the badge
-    r.section("5. The badge window")
+    # ---- 6. the real badge
+    r.section("6. The real badge, drawn by the built app and then measured")
+    where = mac_badge.badge_rect(text_rect)
     r.note()
-    r.note("  This is not the product's badge: nothing on macOS draws that yet.")
-    r.note("  It is the real transparency helper and the real size, on a real")
-    r.note("  window, which is what makes the screenshot worth looking at.")
-    badge = subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "--badge-window", "6"],
+    r.note("  The badge belongs at (%d, %d) to (%d, %d): the shared geometry's"
+           % (where.left, where.top, where.right, where.bottom))
+    r.note("  answer for this text box, the bottom row docked right. That")
+    r.note("  rectangle is screenshotted before and after the app draws, so")
+    r.note("  what follows is a measurement rather than the window's own")
+    r.note("  opinion of itself.")
+    points = display_width_points()
+    before_png = shot("badge-before")
+    watcher = subprocess.Popen(
+        [inner, "--seconds", "20"],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
-    time.sleep(3)
-    shot("badge-drawn")
+    mode = None
+    said = []
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        line = watcher.stdout.readline()
+        if not line:
+            break
+        said.append(line.rstrip())
+        if line.startswith("transparency:"):
+            mode = line.split(":", 1)[1].strip()
+            break
+    time.sleep(2)              # let it paint before the shutter
+    after_png = shot("badge-drawn")
+    front = accessibility.frontmost()
+    r.verdict("the badge did not steal focus",
+              *classify_focus(front_before, front[2] if front else None))
     try:
-        said = badge.communicate(timeout=30)[0]
+        watcher.wait(timeout=40)
     except subprocess.TimeoutExpired:
-        badge.kill()
-        said = badge.communicate()[0]
-    for line in (said or "").rstrip().splitlines():
-        r.note("    %s" % line)
-    state, why = classify_badge(badge.returncode, said)
-    r.verdict("the badge draws as a circle", state, why)
-
-    # ---- 6. the caret in a text box, which is the real question
-    r.section("6. The caret inside TextEdit's text area")
-    code, text = osascript(
-        'tell application "TextEdit" to activate\n'
-        'delay 1\n'
-        'tell application "System Events" to tell process "TextEdit"\n'
-        '  set frontmost to true\n'
-        '  keystroke " and one more clause typed by the smoke test."\n'
-        'end tell'
-    )
-    state, why = classify_automation(code, text)
-    r.verdict("type into TextEdit", state, why)
-    if text.strip():
-        r.note("    osascript said: %s" % text.strip())
-    time.sleep(1)
-    shot("focus-in-textedit")
-
+        watcher.kill()
+    said += [line.rstrip() for line in (watcher.stdout.read() or "").splitlines()]
     r.note()
-    r.note("  And the check once more, now that a text box genuinely has focus.")
-    r.note("  If Accessibility is working at all, this is where it reports an")
-    r.note("  AXTextArea and the rectangle the badge would sit in.")
-    code, text = r.command("", [sys.executable, os.path.join(BACKEND, "main_mac.py"),
-                                "--check"], timeout=120)
-    state, why = classify_check(code, text)
-    r.verdict("a focused text box is readable", state, why)
+    r.note("  what the app printed while it ran:")
+    for line in said:
+        r.note("    %s" % line)
 
-    # ---- done
-    report_path = os.path.join(out, "smoke-report.txt")
-    worst = r.write(report_path)
-    print("\nwrote %s (worst verdict: %s)" % (report_path, worst), flush=True)
-    print("screenshots in %s" % out, flush=True)
-    if shutil.which("ls"):
-        print(run(["ls", "-la", out])[1], flush=True)
-    return 0
+    if before_png is None or after_png is None:
+        r.verdict("the real badge draws as a circle", BLOCKED,
+                  "no screenshot to measure")
+    elif points is None:
+        r.verdict("the real badge draws as a circle", UNKNOWN,
+                  "could not read the display size, so the crop would be a guess")
+    else:
+        with Image.open(after_png) as img:
+            scale = img.width / points
+        r.note()
+        r.note("  display is %d points wide and the screenshot is %.0fx that"
+               % (points, scale))
+        corner, centre = badge_deltas(before_png, after_png, where, scale)
+        r.note("  corners moved %.1f, the mark itself moved %.1f (0-255)"
+               % (corner, centre))
+        r.verdict("the real badge draws as a circle",
+                  *classify_badge(mode, corner, centre))
+        zoom = os.path.join(out, "badge-zoom.png")
+        try:
+            crop_badge(after_png, where, scale, zoom)
+            r.note("  a 4x cut of it is in %s" % os.path.basename(zoom))
+        except Exception as exc:
+            r.note("  could not cut the zoom: %s" % exc)
+
+    # ---- 7. the corrected text, written back into the box
+    r.section("7. The correction, applied in place")
+    r.note()
+    r.note("  --fix-once is the review card's Apply button without the card:")
+    r.note("  read the focused box, run the rules, write the result back")
+    r.note("  through the Accessibility API, falling back to a paste.")
+    before_text = accessibility.read_text(element)
+    code, text = r.command("", [inner, "--fix-once"], timeout=120)
+    time.sleep(1.0)
+    after_text = accessibility.read_text(element)
+    if code not in (0, 4):
+        r.verdict("the correction is applied", FAILED,
+                  "--fix-once exited %s" % code)
+    else:
+        r.verdict("the correction is applied",
+                  *classify_correction(before_text, after_text, corrected))
+    shot("corrected")
+
+    # ---- what nobody measured
+    r.section("8. What this run does not cover")
+    r.not_covered("the review card",
+                  "macOS has no review card yet; it is SuggestionPopup in "
+                  "main.py and porting it is its own piece of work")
+    r.not_covered("a second display",
+                  "the runner has one, and a display above or left of the "
+                  "primary is where the shared geometry is most likely wrong")
+    return finish(None)
 
 
 if __name__ == "__main__":

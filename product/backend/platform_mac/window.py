@@ -59,6 +59,28 @@ def make_badge_window_transparent(win, key_color):
         return "opaque"
 
 
+def badge_background(mode, key_color):
+    """What to paint behind the badge's own widgets, given what the window
+    managed. **Every widget inside the badge window has to use this.**
+
+    Making the TOPLEVEL transparent is not enough on macOS, and finding that
+    out cost the first real CI screenshot. The run reported `transparency:
+    keyed` and the picture showed a dark rectangle with a sliver of purple in
+    it. Both were true: `-transparent` was accepted, and the Canvas inside it
+    had a solid `-background` and was drawn solid straight over the top. The
+    window was transparent; nothing you could see was.
+
+    So "keyed" on a Mac means the children go to `systemTransparent` as well.
+    Anywhere else, including the alpha and opaque rungs of the ladder, the
+    children keep the key colour: on Windows that is the shade the window
+    deletes, and on a Mac that is the faint-or-solid square the ladder already
+    says you get when the keying did not work.
+    """
+    if mode == "keyed" and is_macos():
+        return "systemTransparent"
+    return key_color
+
+
 def keep_on_top(win):
     """Float above other applications' windows.
 

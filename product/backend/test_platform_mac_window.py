@@ -99,6 +99,40 @@ class TransparencyFallsBackRatherThanFails(unittest.TestCase):
                     window.make_badge_window_transparent(w, KEY)   # must return
 
 
+class TheLadderHasToReachTheWidgetsInside(unittest.TestCase):
+    """The first real CI run reported `transparency: keyed` over a screenshot
+    of a dark rectangle, and both were true. `-transparent` was accepted on
+    the toplevel, and the Canvas inside it had a solid -background and was
+    drawn straight over it. A transparent window with an opaque child is an
+    opaque badge."""
+
+    def test_a_keyed_mac_window_makes_its_children_transparent_too(self):
+        with as_platform(macos=True):
+            self.assertEqual("systemTransparent",
+                             window.badge_background("keyed", KEY))
+
+    def test_windows_children_keep_the_key_colour(self):
+        """That shade is what -transparentcolor deletes, so on Windows the
+        children painting it IS the transparency."""
+        with as_platform(macos=False):
+            self.assertEqual(KEY, window.badge_background("keyed", KEY))
+
+    def test_the_lower_rungs_keep_the_key_colour_on_both(self):
+        """alpha and opaque both mean the square is visible, faintly or not,
+        which is what the ladder already promises you get."""
+        for macos in (False, True):
+            for mode in ("alpha", "opaque"):
+                with self.subTest(macos=macos, mode=mode):
+                    with as_platform(macos=macos):
+                        self.assertEqual(KEY, window.badge_background(mode, KEY))
+
+    def test_an_unknown_mode_is_treated_as_not_transparent(self):
+        """Fail towards the visible square rather than towards a background
+        the toolkit may not understand at all."""
+        with as_platform(macos=True):
+            self.assertEqual(KEY, window.badge_background(None, KEY))
+
+
 class TheMacBadgeMustNotStealFocus(unittest.TestCase):
     """The one thing that would make the badge unusable: appearing mid sentence
     and taking the caret. Also never exercised before the suite saw a Mac."""

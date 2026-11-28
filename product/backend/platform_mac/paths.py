@@ -45,6 +45,22 @@ def storage_paths():
     }
 
 
+def asset_path(name):
+    """A file from frontend/assets, wherever it ended up.
+
+    main.py has the Windows twin of this. PyInstaller unpacks datas next to
+    the executable in a .app bundle (Contents/MacOS, via sys._MEIPASS), while
+    a source tree keeps them in product/frontend/assets. badge_art.configure()
+    takes this so the shared drawing code never learns either layout.
+    """
+    import sys
+    base = getattr(sys, "_MEIPASS", None)
+    if base is None:
+        backend = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        base = os.path.join(os.path.dirname(backend), "frontend")
+    return os.path.join(base, "assets", name)
+
+
 def log_path():
     return os.path.join(support_dir(), "debug.log")
 
