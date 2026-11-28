@@ -11,3 +11,10 @@ pyobjc-framework-ApplicationServices==11.1   # AXUIElement, the Accessibility AP
 
 # Shared with Windows: the local model and the rules engine need these.
 onnxruntime-genai==0.9.2
+
+# The badge is a PIL image (badge_art.py), the same one Windows draws. It was
+# missing here while nothing on macOS drew a badge, so the Mac build would
+# have shipped a text "C" where the logo goes. The smoke run also measures the
+# badge's own pixels in a screenshot with it, which is how "the corners really
+# are invisible" stopped being a claim and became a check.
+Pillow
