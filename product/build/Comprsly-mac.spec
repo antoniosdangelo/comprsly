@@ -33,6 +33,10 @@ a = Analysis(
         'platform_mac', 'platform_mac.accessibility', 'platform_mac.input',
         'platform_mac.processes', 'platform_mac.autostart', 'platform_mac.paths',
         'AppKit', 'Quartz', 'ApplicationServices', 'objc',
+        # The badge: shared artwork, drawn with PIL, shown through Tk.
+        'badge_art', 'suggestion_engine',
+        'PIL', 'PIL.Image', 'PIL.ImageDraw', 'PIL.ImageTk',
+        'tkinter',
     ],
     hookspath=[],
     runtime_hooks=[],
